@@ -1,0 +1,99 @@
+'use client';
+// Shared workflow bar: Submit / Approve / Reject / Unlock + Print + SAP export.
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+import { StatusBadge } from './ui';
+
+export function WorkflowBar({
+  type,
+  id,
+  status,
+  canApprove,
+  canUnlock,
+  beforeSubmit,
+}: {
+  type: 'intake' | 'qc' | 'production';
+  id: string;
+  status: string;
+  canApprove: boolean;
+  canUnlock: boolean;
+  beforeSubmit?: () => Promise<void>; // flush autosave first
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
+
+  async function act(action: string, needReason = false) {
+    setError(null);
+    setMissing([]);
+    let reason: string | undefined;
+    if (needReason) {
+      reason = window.prompt(action === 'reject' ? 'Reason for rejection (required):' : 'Reason for unlocking (goes to the audit log):') ?? undefined;
+      if (action === 'reject' && !reason?.trim()) return;
+    }
+    setBusy(true);
+    try {
+      if (action === 'submit' && beforeSubmit) await beforeSubmit();
+      const res = await fetch(`/api/records/${type}/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.missing) setMissing(data.missing);
+        else setError(data.error || 'Something went wrong');
+        return;
+      }
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="no-print space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={status} />
+        {(status === 'DRAFT' || status === 'REJECTED') && (
+          <button className="btn-primary" disabled={busy} onClick={() => act('submit')}>
+            Submit for approval
+          </button>
+        )}
+        {status === 'SUBMITTED' && canApprove && (
+          <>
+            <button className="btn-primary" disabled={busy} onClick={() => act('approve')}>
+              Approve
+            </button>
+            <button className="btn-danger" disabled={busy} onClick={() => act('reject', true)}>
+              Reject…
+            </button>
+          </>
+        )}
+        {status === 'APPROVED' && canUnlock && (
+          <button className="btn-secondary" disabled={busy} onClick={() => act('unlock', true)}>
+            Unlock for editing…
+          </button>
+        )}
+        <a className="btn-secondary" href={`/print/${type}/${id}`} target="_blank">
+          Print / PDF
+        </a>
+        <a className="btn-secondary" href={`/api/export/${type}/${id}`} target="_blank">
+          Export JSON (SAP)
+        </a>
+      </div>
+      {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {missing.length > 0 && (
+        <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <div className="font-medium">Before submitting, please fill in:</div>
+          <ul className="ml-5 list-disc">
+            {missing.map((m) => (
+              <li key={m}>{m}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}

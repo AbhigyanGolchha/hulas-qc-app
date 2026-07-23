@@ -1,0 +1,414 @@
+// Hulas Khadya QC & Production Reporting — data model
+// SQLite for dev; switch provider to "postgresql" for production.
+// SQLite via Prisma has no enums/Json — statuses are String constants
+// (see src/lib/constants.ts) and JSON payloads live in String columns.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Master data ----------
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model Mill {
+  id            String  @id @default(uuid())
+  code          String  @unique // RFM, CAM, CHM, BJM — used in batch numbers
+  name          String
+  sapPlantCode  String? // SAP-readiness, blank for now
+  batchSeq      Int     @default(0) // last used batch number
+  // yield sanity thresholds (admin-editable, %)
+  totalRecoveryMin Float?
+  totalRecoveryMax Float?
+  mainYieldMin     Float?
+  mainYieldMax     Float?
+  processFields    String? // JSON: extra Section B fields e.g. ["soakTimeHrs","roastTempC","saltNotes"]
+  sortOrder     Int     @default(0)
+  active        Boolean @default(true)
+
+  products          Product[]
+  batches           Batch[]
+  intakeReports     IntakeReport[]
+  productionReports ProductionReport[]
+  users             User[]
+}
+
+model Material {
+  id              String  @id @default(uuid())
+  name            String  @unique // Wheat, Paddy, Rice
+  sapMaterialCode String?
+  sapUom          String?
+  sortOrder       Int     @default(0)
+  active          Boolean @default(true)
+
+  parameters    Parameter[]
+  intakeReports IntakeReport[]
+}
+
+model Product {
+  id              String  @id @default(uuid())
+  millId          String
+  mill            Mill    @relation(fields: [millId], references: [id])
+  name            String
+  kind            String  @default("PRODUCT") // PRODUCT | BYPRODUCT
+  shelfLifeDays   Int?
+  hasQcSheet      Boolean @default(false) // by-products have production rows but no QC sheet
+  hasFortification Boolean @default(false) // Mill Atta premix sub-section
+  sapMaterialCode String?
+  sapUom          String?
+  sortOrder       Int     @default(0)
+  active          Boolean @default(true)
+
+  parameters     Parameter[]
+  qcReports      QcReport[]
+  productionRows ProductionRow[]
+
+  @@unique([millId, name])
+}
+
+model Supplier {
+  id            String  @id @default(uuid())
+  name          String  @unique
+  sapVendorCode String?
+  active        Boolean @default(true)
+
+  intakeReports IntakeReport[]
+}
+
+model PackSize {
+  id        String  @id @default(uuid())
+  label     String  @unique // "400 g", "50 kg bora"
+  grams     Int
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+}
+
+model User {
+  id           String  @id @default(uuid())
+  username     String  @unique
+  name         String
+  passwordHash String
+  role         String // ADMIN | MANAGER | QC | SUPERVISOR | GODOWN
+  millId       String? // supervisors are per-mill
+  mill         Mill?   @relation(fields: [millId], references: [id])
+  active       Boolean @default(true)
+
+  auditLogs AuditLog[]
+}
+
+// Parameter = one row of a QC template. Attached to either a Material
+// (spot analysis template) or a Product (finished product QC sheet).
+model Parameter {
+  id          String  @id @default(uuid())
+  materialId  String?
+  material    Material? @relation(fields: [materialId], references: [id])
+  productId   String?
+  product     Product?  @relation(fields: [productId], references: [id])
+  name        String
+  unit        String? // %, gm, kg/m³, s, ppb, mg/kg, mm, °C, g/L, ratio, score
+  valueType   String  @default("NUMBER") // NUMBER | TEXT | SELECT
+  options     String? // JSON array for SELECT
+  sampleCount Int     @default(1) // 1 or 3 (moisture)
+  hasIr       Boolean @default(false) // extra IR-moisture instrument reading column
+  sortOrder   Int     @default(0)
+  active      Boolean @default(true)
+
+  specVersions  SpecVersion[]
+  intakeResults IntakeResult[]
+  qcResults     QcResult[]
+}
+
+// Versioned spec limits. A report always references the SpecVersion in
+// force when it was tested, so old reports display historical specs.
+model SpecVersion {
+  id          String   @id @default(uuid())
+  parameterId String
+  parameter   Parameter @relation(fields: [parameterId], references: [id])
+  version     Int
+  // operator: LTE, LT, GTE, GT, RANGE, NIL (must be 0), RECORD (no pass/fail), TEXT_MATCH
+  operator    String
+  min         Float?
+  max         Float?
+  textExpected String? // for TEXT_MATCH e.g. "Nil"
+  displayText String // exactly what prints in the "Standard Specification" column
+  sourceTag   String  @default("INTERNAL") // INTERNAL (⚙) | REFERENCE (📖)
+  regulatoryRef String? // e.g. "FSSAI: ash ≤ 1.0%"
+  note        String?
+  effectiveFrom DateTime @default(now())
+  createdBy   String?
+
+  intakeResults IntakeResult[]
+  qcResults     QcResult[]
+
+  @@unique([parameterId, version])
+}
+
+// ---------- Batches ----------
+
+model Batch {
+  id      String   @id @default(uuid())
+  millId  String
+  mill    Mill     @relation(fields: [millId], references: [id])
+  batchNo String // RFM-193
+  dateAd  DateTime
+  dateBs  String // "2083-01-03"
+  notes   String?
+  sapOrderNo String? // SAP production order this batch confirms against (filled at integration time)
+  createdAt DateTime @default(now())
+
+  intakeReports     IntakeReport[]
+  qcReports         QcReport[]
+  productionReports ProductionReport[]
+  retentionSamples  RetentionSample[]
+
+  @@unique([millId, batchNo])
+}
+
+model RetentionSample {
+  id         String   @id @default(uuid())
+  batchId    String
+  batch      Batch    @relation(fields: [batchId], references: [id])
+  productName String
+  location   String
+  reviewDate DateTime?
+  notes      String?
+  createdAt  DateTime @default(now())
+}
+
+// ---------- Module 1: Spot Analysis (raw material intake) ----------
+
+model IntakeReport {
+  id         String   @id @default(uuid())
+  reportNo   String   @unique // SA-2083-0001
+  materialId String
+  material   Material @relation(fields: [materialId], references: [id])
+  millId     String? // destination mill
+  mill       Mill?    @relation(fields: [millId], references: [id])
+  batchId    String?
+  batch      Batch?   @relation(fields: [batchId], references: [id])
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+
+  dateAd         DateTime
+  dateBs         String
+  variety        String?
+  challanNo      String?
+  vehicleNo      String?
+  unloadingPlace String?
+  weightKg       Float?
+  bags           Int?
+  bagType        String? // jute | PP
+  season         String?
+
+  decision        String? // ACCEPTED | ACCEPTED_DEDUCTION | REJECTED
+  decisionReason  String?
+  // purchase price agreed with the supplier, ₨ per quintal (100 kg) — the
+  // base every deduction is computed against, and what SAP prices the GRPO from
+  pricePerQuintal Float?
+  // deductions, any mix of the three ways the mills actually apply them:
+  weightCutKg        Float? // katti — kg removed from the payable weight
+  priceCutPerQuintal Float? // ₨ knocked off the per-quintal rate for the lot
+  deductionAmount    Float? // flat ₨ amount off the payment
+  deductionRate      Float? // legacy %/kg field — kept for old reports, no longer entered
+
+  status       String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | REJECTED
+  godownKeeper String?
+  checkedBy    String?
+  approvedBy   String?
+  approvedAt   DateTime?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  results IntakeResult[]
+  productionInputs ProductionInput[]
+}
+
+model IntakeResult {
+  id            String  @id @default(uuid())
+  reportId      String
+  report        IntakeReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  parameterId   String
+  parameter     Parameter    @relation(fields: [parameterId], references: [id])
+  specVersionId String
+  specVersion   SpecVersion  @relation(fields: [specVersionId], references: [id])
+  valueNum      Float? // blank = not tested (never coerce to 0)
+  valueText     String?
+  note          String?
+  evalStatus    String? // PASS | FAIL | null (not tested / RECORD)
+
+  @@unique([reportId, parameterId])
+}
+
+// ---------- Module 2: Finished Product QC ----------
+
+model QcReport {
+  id        String  @id @default(uuid())
+  reportNo  String  @unique // QC-2083-0001
+  batchId   String
+  batch     Batch   @relation(fields: [batchId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  dateAd  DateTime
+  dateBs  String
+  analyst String?
+
+  overallResult    String? // PASS | FAIL
+  overallOverridden Boolean @default(false)
+  overrideReason   String?
+  remarks          String?
+
+  // Fortification sub-section (Mill Atta)
+  premixBrand   String?
+  premixLot     String?
+  premixTarget  Float? // g/MT
+  premixActual  Float? // g/MT
+  doserWorking  Boolean?
+  premixRemarks String?
+
+  status      String   @default("DRAFT")
+  checkedBy   String?
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  results QcResult[]
+}
+
+model QcResult {
+  id            String @id @default(uuid())
+  reportId      String
+  report        QcReport    @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  parameterId   String
+  parameter     Parameter   @relation(fields: [parameterId], references: [id])
+  specVersionId String
+  specVersion   SpecVersion @relation(fields: [specVersionId], references: [id])
+
+  sample1    Float?
+  sample2    Float?
+  sample3    Float?
+  irMoisture Float?
+  resultNum  Float? // auto = avg of samples, editable override
+  resultText String?
+  resultOverridden Boolean @default(false)
+  remarks    String? // "3 Sample" / "1 Sample"
+  evalStatus String?
+
+  @@unique([reportId, parameterId])
+}
+
+// ---------- Module 3: Daily Production ----------
+
+model ProductionReport {
+  id       String @id @default(uuid())
+  reportNo String @unique // DP-2083-0001
+  millId   String
+  mill     Mill   @relation(fields: [millId], references: [id])
+  batchId  String
+  batch    Batch  @relation(fields: [batchId], references: [id])
+
+  dateAd         DateTime
+  dateBs         String
+  packagingHours Float?
+  vendors        String?
+
+  // Section B — shift/operations
+  manpower       Int?
+  startTime      String? // "22:00" — overnight shifts handled in calc
+  closeTime      String? // "06:00"
+  breakdownMin   Float? // auto = Σ downtime, editable override
+  cumulativeMT   Float?
+  electricityKwh Float?
+  voltage        Float?
+  cumulativeKwh  Float?
+  processExtras  String? // JSON: {soakTimeHrs, roastTempC, saltNotes} per mill config
+
+  status      String   @default("DRAFT")
+  preparedBy  String?
+  approvedBy  String?
+  approvedAt  DateTime?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inputs   ProductionInput[]
+  rows     ProductionRow[]
+  downtime DowntimeEntry[]
+}
+
+model ProductionInput {
+  id             String  @id @default(uuid())
+  reportId       String
+  report         ProductionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  invoiceNo      String?
+  kantaKg        Float? // weighbridge
+  boraKg         Float? // bag tare
+  netKg          Float? // auto = kanta − bora (stored for export)
+  bagType        String?
+  intakeReportId String?
+  intakeReport   IntakeReport? @relation(fields: [intakeReportId], references: [id])
+  sortOrder      Int     @default(0)
+}
+
+model ProductionRow {
+  id             String  @id @default(uuid())
+  reportId       String
+  report         ProductionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product @relation(fields: [productId], references: [id])
+  semiFinishedKg Float?
+  packedKg       String? // JSON: { [packSizeId]: kg }
+  sortOrder      Int     @default(0)
+}
+
+model DowntimeEntry {
+  id          String  @id @default(uuid())
+  reportId    String
+  report      ProductionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  fromTime    String? // "00:30"
+  toTime      String? // "01:00"
+  durationMin Float? // auto
+  department  String? // Product In | Product Out | others
+  rootCause   String?
+  sortOrder   Int     @default(0)
+}
+
+// ---------- Cross-cutting ----------
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  userName   String?
+  recordType String // INTAKE | QC | PRODUCTION | SPEC | MASTER
+  recordId   String
+  action     String // CREATE | UPDATE | SUBMIT | APPROVE | REJECT | UNLOCK | FIELD_CHANGE
+  field      String?
+  oldValue   String?
+  newValue   String?
+  at         DateTime @default(now())
+}
+
+model IntegrationOutbox {
+  id          String    @id @default(uuid())
+  recordType  String // SAP_QM_INSPECTION_LOT | SAP_PROD_ORDER_CONFIRMATION
+  recordId    String
+  payload     String // JSON, shaped for the SAP connector
+  status      String    @default("PENDING") // PENDING | SENT | FAILED
+  attempts    Int       @default(0)
+  lastError   String?
+  lastTriedAt DateTime?
+  sapDocNo    String? // document number SAP returned (or MOCK-… in mock mode)
+  createdAt   DateTime  @default(now())
+}
