@@ -47,8 +47,16 @@ batches for the Chakki (CAM-87, submitted → try approving), Chiura (CHM-41) an
 - **Yield warnings**: per-mill sanity bands (admin-editable) — e.g. Roller total recovery
   98–103%, Chiura main yield 60–70%. Soft warnings only, never blocking.
 - **Autosave**: forms save ~1.2 s after you stop typing; safe to walk away mid-entry.
+- **Digital sign-offs (no paper signatures)**: each user draws their signature once on
+  `/profile` (mouse/finger/stylus — works on the gate tablet). Submitting a report signs the
+  submitter's slot automatically, Approve signs the manager slot, and co-signers (godown
+  keeper on intake) sign with one tap on the record's *Digital sign-offs* panel. Every
+  signature stores a point-in-time image snapshot + name + timestamp, writes an audit row,
+  and *unlocking voids all signatures* — after edits, everyone signs again. Demo users get
+  seeded cursive signatures; real users replace them on first sign.
 - **Printing**: every report has a paper-style print view (`/print/<type>/<id>`) — use the
-  browser's Print → Save as PDF. Signature names + approval timestamps included.
+  browser's Print → Save as PDF. Prints show the digital signature images with
+  "Digitally signed <time> NPT" — nothing left to sign by hand.
 - **Exports**: CSV of any filtered list (`Export CSV` on list pages); SAP-shaped JSON per
   record (`Export JSON`), also queued in Admin → Integration outbox.
 

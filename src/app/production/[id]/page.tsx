@@ -5,7 +5,10 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle } from '@/components/ui';
 import { ProductionForm, type ProductionFormData } from '@/components/production-form';
+import { SignoffPanel } from '@/components/signoff-panel';
+import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
+import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
 import { parsePacked } from '@/lib/calc';
 
@@ -25,7 +28,7 @@ export default async function ProductionPage({ params }: { params: { id: string 
   });
   if (!r) notFound();
 
-  const [packSizes, intakes] = await Promise.all([
+  const [packSizes, intakes, slots, me] = await Promise.all([
     prisma.packSize.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true } }),
     prisma.intakeReport.findMany({
       where: { OR: [{ millId: r.millId }, { millId: null }] },
@@ -33,6 +36,8 @@ export default async function ProductionPage({ params }: { params: { id: string 
       take: 50,
       include: { material: true, supplier: true },
     }),
+    slotViews('production', params.id),
+    prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
   ]);
 
   const extras = r.processExtras ? JSON.parse(r.processExtras) : {};
@@ -104,6 +109,9 @@ export default async function ProductionPage({ params }: { params: { id: string 
         canApprove={canApprove(user.role)}
         canUnlock={canUnlock(user.role)}
       />
+      <div className="mt-5">
+        <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} />
+      </div>
     </Shell>
   );
 }

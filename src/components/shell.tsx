@@ -38,9 +38,9 @@ export function Shell({ user, active, children }: { user: SessionUser; active: s
             ))}
           </nav>
           <div className="flex items-center gap-3 text-sm">
-            <span className="hidden text-stone-500 sm:inline">
+            <Link href="/profile" className="hidden text-stone-500 underline-offset-2 hover:text-brand-700 hover:underline sm:inline" title="My profile & signature">
               {user.name} · {ROLE_LABELS[user.role as Role] ?? user.role}
-            </span>
+            </Link>
             <form action={logout}>
               <button className="text-stone-400 underline-offset-2 hover:text-stone-700 hover:underline">Sign out</button>
             </form>

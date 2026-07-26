@@ -308,10 +308,10 @@ export function ProductionForm({
       </section>
 
       <section className="rounded-xl border border-stone-200 bg-white p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <L label="Prepared by"><input className="field" disabled={!editable} value={header.preparedBy} onChange={(e) => setH('preparedBy', e.target.value)} /></L>
-          <L label="Approved by"><input className="field" disabled value={initial.status === 'APPROVED' ? 'see status' : 'on approval'} /></L>
-        </div>
+        <p className="text-xs text-stone-500">
+          &quot;Prepared by&quot; and &quot;Approved by&quot; are digital now — submitting signs for
+          you, approval signs the manager slot. See the <b>Digital sign-offs</b> panel below.
+        </p>
       </section>
     </div>
   );

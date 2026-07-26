@@ -266,11 +266,10 @@ export function IntakeForm({
             )}
           </div>
         )}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <L label="Godown Keeper (sign-off)"><input className="field" disabled={!editable} value={header.godownKeeper} onChange={(e) => setH('godownKeeper', e.target.value)} /></L>
-          <L label="Quality Controller"><input className="field" disabled={!editable} value={header.checkedBy} onChange={(e) => setH('checkedBy', e.target.value)} /></L>
-          <L label="Manager"><input className="field" disabled value={initial.status === 'APPROVED' ? 'approved — see status' : 'on approval'} /></L>
-        </div>
+        <p className="mt-4 text-xs text-stone-500">
+          Sign-offs are digital now — see the <b>Digital sign-offs</b> panel below. Submitting signs
+          your slot; the godown keeper co-signs there; approval signs the manager slot.
+        </p>
       </section>
     </div>
   );

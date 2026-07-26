@@ -1,5 +1,7 @@
 'use client';
-// Shared workflow bar: Submit / Approve / Reject / Unlock + Print + SAP export.
+// Shared workflow bar: Submit / Delete draft / Unlock + Print + SAP export.
+// Approve/Reject live in the Digital sign-offs panel at the bottom of the page,
+// next to the approver's signature slot — same place co-signers sign.
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { StatusBadge } from './ui';
@@ -29,9 +31,9 @@ export function WorkflowBar({
     setMissing([]);
     let reason: string | undefined;
     if (needReason) {
-      reason = window.prompt(action === 'reject' ? 'Reason for rejection (required):' : 'Reason for unlocking (goes to the audit log):') ?? undefined;
-      if (action === 'reject' && !reason?.trim()) return;
+      reason = window.prompt('Reason for unlocking (goes to the audit log):') ?? undefined;
     }
+    if (action === 'delete' && !window.confirm('Delete this draft? This cannot be undone.')) return;
     setBusy(true);
     try {
       if (action === 'submit' && beforeSubmit) await beforeSubmit();
@@ -44,6 +46,10 @@ export function WorkflowBar({
       if (!res.ok) {
         if (data.missing) setMissing(data.missing);
         else setError(data.error || 'Something went wrong');
+        return;
+      }
+      if (data.deleted) {
+        router.push(`/${type}`);
         return;
       }
       router.refresh();
@@ -61,15 +67,13 @@ export function WorkflowBar({
             Submit for approval
           </button>
         )}
+        {status === 'DRAFT' && (
+          <button className="btn-danger" disabled={busy} onClick={() => act('delete')}>
+            Delete draft…
+          </button>
+        )}
         {status === 'SUBMITTED' && canApprove && (
-          <>
-            <button className="btn-primary" disabled={busy} onClick={() => act('approve')}>
-              Approve
-            </button>
-            <button className="btn-danger" disabled={busy} onClick={() => act('reject', true)}>
-              Reject…
-            </button>
-          </>
+          <span className="text-sm text-stone-500">Review the sheet, then approve in the sign-offs panel below ↓</span>
         )}
         {status === 'APPROVED' && canUnlock && (
           <button className="btn-secondary" disabled={busy} onClick={() => act('unlock', true)}>

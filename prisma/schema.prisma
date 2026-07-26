@@ -100,8 +100,27 @@ model User {
   millId       String? // supervisors are per-mill
   mill         Mill?   @relation(fields: [millId], references: [id])
   active       Boolean @default(true)
+  signatureData String? // drawn signature (PNG data URI) — set once on /profile
 
-  auditLogs AuditLog[]
+  auditLogs  AuditLog[]
+  signatures Signature[]
+}
+
+// Digital sign-off: one row per signature slot per record. The image is a
+// snapshot taken at signing time, so later changes to a user's stored
+// signature never rewrite history. Editing after unlock voids these rows.
+model Signature {
+  id         String   @id @default(uuid())
+  recordType String // INTAKE | QC | PRODUCTION
+  recordId   String
+  slot       String // e.g. "Godown Keeper", "Quality Controller", "Manager"
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  userName   String
+  imageData  String? // signature image snapshot (may be null — name+timestamp still binding)
+  signedAt   DateTime @default(now())
+
+  @@unique([recordType, recordId, slot])
 }
 
 // Parameter = one row of a QC template. Attached to either a Material
@@ -219,8 +238,9 @@ model IntakeReport {
   deductionAmount    Float? // flat ₨ amount off the payment
   deductionRate      Float? // legacy %/kg field — kept for old reports, no longer entered
 
-  status       String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | REJECTED
-  godownKeeper String?
+  status        String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | REJECTED
+  approvalStage Int      @default(0) // stages completed so far (multi-step approval)
+  godownKeeper  String?
   checkedBy    String?
   approvedBy   String?
   approvedAt   DateTime?
@@ -275,7 +295,8 @@ model QcReport {
   doserWorking  Boolean?
   premixRemarks String?
 
-  status      String   @default("DRAFT")
+  status        String   @default("DRAFT")
+  approvalStage Int      @default(0)
   checkedBy   String?
   approvedBy  String?
   approvedAt  DateTime?
@@ -334,7 +355,8 @@ model ProductionReport {
   cumulativeKwh  Float?
   processExtras  String? // JSON: {soakTimeHrs, roastTempC, saltNotes} per mill config
 
-  status      String   @default("DRAFT")
+  status        String   @default("DRAFT")
+  approvalStage Int      @default(0)
   preparedBy  String?
   approvedBy  String?
   approvedAt  DateTime?
@@ -385,6 +407,18 @@ model DowntimeEntry {
 }
 
 // ---------- Cross-cutting ----------
+
+// Admin-configurable approval chain per record type. No rows for a type =
+// the built-in single-approver flow (SLOTS approver, MANAGER/ADMIN) applies.
+model ApprovalStage {
+  id         String @id @default(uuid())
+  recordType String // INTAKE | QC | PRODUCTION
+  order      Int // 1..N — approvals happen in this order
+  title      String // signature slot label, e.g. "Mill Supervisor", "General Manager"
+  role       String // role whose users may approve this stage (ADMIN always may)
+
+  @@unique([recordType, order])
+}
 
 model AuditLog {
   id         String   @id @default(uuid())

@@ -9,6 +9,9 @@ async function set(key: string, value: string) {
 }
 
 async function main() {
+  // snapshot whatever config is live so cleanup can put it back exactly
+  const saved = await prisma.setting.findMany({ where: { key: { startsWith: 'sap.' } } });
+
   // point the connector at the fake Service Layer
   await set('sap.profile', 'b1');
   await set('sap.baseUrl', 'http://localhost:5999');
@@ -49,12 +52,9 @@ async function main() {
   await prisma.integrationOutbox.deleteMany({ where: { sapDocNo: { not: { startsWith: 'MOCK' } } } });
   await prisma.batch.update({ where: { millId_batchNo: { millId: prod.millId, batchNo: 'RFM-193' } }, data: { sapOrderNo: null } });
   await prisma.product.updateMany({ where: { millId: prod.millId }, data: { sapMaterialCode: null } });
-  await set('sap.baseUrl', '');
-  await set('sap.username', '');
-  await set('sap.password', '');
-  await set('sap.client', '');
-  await set('sap.b1ProductionMode', 'udo');
-  console.log('cleaned up — config reset, test rows removed');
+  await prisma.setting.deleteMany({ where: { key: { startsWith: 'sap.' }, NOT: { key: { in: saved.map((r) => r.key) } } } });
+  for (const row of saved) await set(row.key, row.value);
+  console.log('cleaned up — config restored, test rows removed');
   await prisma.$disconnect();
 }
 

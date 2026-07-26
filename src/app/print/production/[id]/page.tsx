@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
-import { PrintHeader, PrintDates, SignRow, td, th } from '@/components/print-bits';
+import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
+import { getSignatures } from '@/lib/sign';
 import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from '@/lib/calc';
 
 export const dynamic = 'force-dynamic';
@@ -151,10 +152,13 @@ export default async function PrintProduction({ params }: { params: { id: string
       )}
 
       <SignRow
-        signs={[
-          { label: 'Prepared By', name: r.preparedBy },
-          { label: 'Approved By', name: r.approvedBy, at: r.approvedAt },
-        ]}
+        signs={toPrintSigns(
+          [
+            { slot: 'Prepared by', legacyName: r.preparedBy },
+            { slot: 'Approved by', legacyName: r.approvedBy, legacyAt: r.approvedAt },
+          ],
+          await getSignatures('production', r.id),
+        )}
       />
     </>
   );

@@ -5,7 +5,10 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle } from '@/components/ui';
 import { QcForm, type QcFormData } from '@/components/qc-form';
+import { SignoffPanel } from '@/components/signoff-panel';
+import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
+import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
 
 export const dynamic = 'force-dynamic';
@@ -23,11 +26,15 @@ export default async function QcPage({ params }: { params: { id: string } }) {
   if (!r) notFound();
 
   // sibling QC sheets on the same batch = "tabs per product"
-  const siblings = await prisma.qcReport.findMany({
-    where: { batchId: r.batchId },
-    include: { product: true },
-    orderBy: { product: { sortOrder: 'asc' } },
-  });
+  const [siblings, slots, me] = await Promise.all([
+    prisma.qcReport.findMany({
+      where: { batchId: r.batchId },
+      include: { product: true },
+      orderBy: { product: { sortOrder: 'asc' } },
+    }),
+    slotViews('qc', params.id),
+    prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
+  ]);
 
   const initial: QcFormData = {
     id: r.id,
@@ -95,6 +102,9 @@ export default async function QcPage({ params }: { params: { id: string } }) {
         </div>
       )}
       <QcForm initial={initial} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} isManager={canApprove(user.role)} />
+      <div className="mt-5">
+        <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} />
+      </div>
     </Shell>
   );
 }

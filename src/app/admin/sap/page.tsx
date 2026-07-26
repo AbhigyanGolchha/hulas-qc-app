@@ -6,6 +6,13 @@ import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
 import { getSapConfig, testConnection, syncPending, deliverRow } from '@/lib/connector';
+import { pullSuppliersFromB1 } from '@/lib/sap-pull';
+import { ActionButton } from '@/components/action-button';
+
+// Next's redirect() works by throwing — anything else is a real error to show the user
+function isRedirect(e: unknown) {
+  return Boolean((e as any)?.digest?.startsWith?.('NEXT_REDIRECT'));
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -45,9 +52,27 @@ async function runTest() {
 async function runSync() {
   'use server';
   const user = await guard();
-  const r = await syncPending();
-  await logAudit(user, 'MASTER', 'sap-sync', 'UPDATE', 'outbox', null, `sent=${r.sent}, failed=${r.failed}`);
-  redirect(`/admin/sap?sync=sent ${r.sent}, failed ${r.failed}`);
+  try {
+    const r = await syncPending();
+    await logAudit(user, 'MASTER', 'sap-sync', 'UPDATE', 'outbox', null, `sent=${r.sent}, failed=${r.failed}`);
+    redirect(`/admin/sap?sync=${encodeURIComponent(`sent ${r.sent}, failed ${r.failed}`)}&syncok=${r.failed === 0 ? 1 : 0}`);
+  } catch (e) {
+    if (isRedirect(e)) throw e;
+    redirect(`/admin/sap?sync=${encodeURIComponent(String((e as Error).message ?? e))}&syncok=0`);
+  }
+}
+
+async function runPullSuppliers() {
+  'use server';
+  const user = await guard();
+  try {
+    const r = await pullSuppliersFromB1();
+    await logAudit(user, 'MASTER', 'sap-pull', 'UPDATE', 'suppliers', null, `fetched=${r.fetched}, created=${r.created}, updated=${r.updated}, linked=${r.linked}`);
+    redirect(`/admin/sap?pull=${encodeURIComponent(`${r.fetched} suppliers in SAP — ${r.created} added, ${r.linked} linked to existing, ${r.updated} refreshed`)}&pullok=1`);
+  } catch (e) {
+    if (isRedirect(e)) throw e;
+    redirect(`/admin/sap?pull=${encodeURIComponent(String((e as Error).message ?? e))}&pullok=0`);
+  }
 }
 
 async function retryRow(formData: FormData) {
@@ -55,8 +80,15 @@ async function retryRow(formData: FormData) {
   await guard();
   const id = String(formData.get('id'));
   await prisma.integrationOutbox.update({ where: { id }, data: { status: 'PENDING', attempts: 0, lastError: null } });
-  await deliverRow(id);
-  revalidatePath('/admin/sap');
+  try {
+    const r = await deliverRow(id);
+    revalidatePath('/admin/sap');
+    if (r.ok) redirect(`/admin/sap?retry=${encodeURIComponent(`delivered → ${r.docNo ?? 'ok'}`)}&retryok=1`);
+    redirect(`/admin/sap?retry=${encodeURIComponent(r.error ?? 'delivery failed — see the row below')}&retryok=0`);
+  } catch (e) {
+    if (isRedirect(e)) throw e;
+    redirect(`/admin/sap?retry=${encodeURIComponent(String((e as Error).message ?? e))}&retryok=0`);
+  }
 }
 
 export default async function SapAdmin({ searchParams }: { searchParams: Record<string, string> }) {
@@ -79,7 +111,9 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
 
       {searchParams.saved && <Banner tone="ok">Settings saved.</Banner>}
       {searchParams.test && <Banner tone={searchParams.testok === '1' ? 'ok' : 'warn'}>Connection test: {searchParams.test}</Banner>}
-      {searchParams.sync && <Banner tone="ok">Sync finished — {searchParams.sync}.</Banner>}
+      {searchParams.sync && <Banner tone={searchParams.syncok === '1' ? 'ok' : 'warn'}>Sync finished — {searchParams.sync}.</Banner>}
+      {searchParams.pull && <Banner tone={searchParams.pullok === '1' ? 'ok' : 'warn'}>Supplier pull: {searchParams.pull}</Banner>}
+      {searchParams.retry && <Banner tone={searchParams.retryok === '1' ? 'ok' : 'warn'}>Retry: {searchParams.retry}</Banner>}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Connection settings">
@@ -132,12 +166,13 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
               Field mappings live in <code>src/lib/connector.ts</code> and must be finalized with your SAP consultant before go-live.
             </p>
             <div className="flex gap-2">
-              <button className="btn-primary">Save settings</button>
+              <ActionButton className="btn-primary" busyLabel="Saving…">Save settings</ActionButton>
             </div>
           </form>
-          <div className="mt-3 flex gap-2">
-            <form action={runTest}><button className="btn-secondary">Test connection</button></form>
-            <form action={runSync}><button className="btn-secondary">Sync now ({counts.pending} pending)</button></form>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <form action={runTest}><ActionButton busyLabel="Testing…">Test connection</ActionButton></form>
+            <form action={runSync}><ActionButton busyLabel="Syncing…">Sync now ({counts.pending} pending)</ActionButton></form>
+            <form action={runPullSuppliers}><ActionButton busyLabel="Pulling from SAP…">Pull suppliers from SAP</ActionButton></form>
           </div>
         </Card>
 
@@ -154,7 +189,7 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
                 </summary>
                 {q.lastError && <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">{q.lastError}</p>}
                 {(q.status === 'FAILED' || (q.status === 'PENDING' && q.attempts > 0)) && (
-                  <form action={retryRow} className="mt-2"><input type="hidden" name="id" value={q.id} /><button className="btn-secondary">Retry now</button></form>
+                  <form action={retryRow} className="mt-2"><input type="hidden" name="id" value={q.id} /><ActionButton busyLabel="Retrying…">Retry now</ActionButton></form>
                 )}
                 <pre className="mt-2 max-h-64 overflow-auto rounded bg-stone-50 p-2 text-xs">{JSON.stringify(JSON.parse(q.payload), null, 2)}</pre>
               </details>
