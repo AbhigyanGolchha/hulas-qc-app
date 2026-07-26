@@ -19,6 +19,7 @@ export default async function AdminHome() {
   const items = [
     { href: '/admin/specs', title: 'Parameters & spec limits', desc: `${params} parameters across all templates. Edits are versioned — old reports keep the spec in force when tested.` },
     { href: '/admin/master', title: 'Master data', desc: `Mills, products & shelf life, suppliers (${suppliers}), pack sizes, users (${users}).` },
+    { href: '/admin/approvals', title: 'Approval flow', desc: 'Who signs off before a report is final — single approval or a multi-step chain per report type.' },
     { href: '/admin/audit', title: 'Audit log', desc: 'Every submit, approval, unlock and post-submission edit: who, when, old → new.' },
     { href: '/admin/sap', title: 'SAP connection', desc: `Connector settings, connection test, delivery queue (${outboxPending} pending). Mock profile until the SAP team hands over access.` },
     { href: '/admin/outbox', title: 'Integration outbox (payload viewer)', desc: 'Raw SAP-shaped JSON payloads, one per approval.' },

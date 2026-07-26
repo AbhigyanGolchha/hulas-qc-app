@@ -1,5 +1,5 @@
 // Central record API. PATCH = save form snapshot (autosave), POST = workflow
-// action { action: submit | approve | reject | unlock, reason? }.
+// action { action: submit | approve | reject | unlock | sign | delete, reason?, slot? }.
 // Server re-evaluates every spec (client colors are advisory only).
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
@@ -9,6 +9,8 @@ import { evaluate, sampleAverage, suggestOverall } from '@/lib/spec';
 import { canApprove, canUnlock } from '@/lib/constants';
 import { durationMinutes } from '@/lib/calc';
 import { exportToOutbox } from '@/lib/sap';
+import { signRecord, voidSignatures, defaultSlot, SLOTS, type RecordKind } from '@/lib/sign';
+import { getStages, currentStage, roleMayApprove } from '@/lib/approval';
 
 type Params = { params: { type: string; id: string } };
 
@@ -33,9 +35,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  const { action, reason } = await req.json();
+  const { action, reason, slot } = await req.json();
   const { type, id } = params;
   const recordType = type.toUpperCase();
+  const kind = type as RecordKind;
 
   const model =
     type === 'intake' ? prisma.intakeReport : type === 'qc' ? prisma.qcReport : type === 'production' ? prisma.productionReport : null;
@@ -49,36 +52,81 @@ export async function POST(req: NextRequest, { params }: Params) {
     const missing = await validateForSubmit(type, id);
     if (missing.length) return NextResponse.json({ error: 'missing', missing }, { status: 422 });
     // @ts-expect-error dynamic model union
-    await model.update({ where: { id }, data: { status: 'SUBMITTED' } });
+    await model.update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0 } });
+    // submitting IS signing: the submitter's e-signature lands in their slot
+    await signRecord(user, kind, id, defaultSlot(kind, user.role));
     await logAudit(user, recordType, id, 'SUBMIT');
     return NextResponse.json({ ok: true, status: 'SUBMITTED' });
   }
 
+  if (action === 'sign') {
+    // manual co-sign (e.g. the godown keeper on an intake report)
+    if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Approved records cannot be signed — they are already sealed' }, { status: 400 });
+    const target = slot || defaultSlot(kind, user.role);
+    if (target === SLOTS[kind].approver) return NextResponse.json({ error: 'The approver slot is signed by the Approve action' }, { status: 400 });
+    await signRecord(user, kind, id, target);
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === 'approve' || action === 'reject') {
-    if (!canApprove(user.role)) return NextResponse.json({ error: 'Only a Manager can approve or reject' }, { status: 403 });
     if (rec.status !== 'SUBMITTED') return NextResponse.json({ error: 'Only submitted records can be approved/rejected' }, { status: 400 });
+    const stages = await getStages(kind);
+    const stage = currentStage(stages, rec.approvalStage ?? 0);
+    // orphaned mid-flow record (chain was shortened): managers may finish it
+    if (stage ? !roleMayApprove(stage, user.role) : !canApprove(user.role)) {
+      return NextResponse.json({ error: `This step is for the ${stage?.role ?? 'MANAGER'} role ("${stage?.title ?? 'approver'}")` }, { status: 403 });
+    }
     if (action === 'reject' && !reason?.trim()) return NextResponse.json({ error: 'A rejection reason is required' }, { status: 422 });
+
+    if (action === 'reject') {
+      // @ts-expect-error dynamic model union
+      await model.update({ where: { id }, data: { status: 'REJECTED', approvalStage: 0 } });
+      // approver signatures no longer attest to anything — preparer slots stay
+      await prisma.signature.deleteMany({ where: { recordType, recordId: id, slot: { in: stages.map((s) => s.title) } } });
+      await logAudit(user, recordType, id, 'REJECT', undefined, rec.status, `REJECTED at "${stage?.title ?? 'approval'}": ${reason ?? ''}`);
+      return NextResponse.json({ ok: true, status: 'REJECTED' });
+    }
+
+    // approve: sign this stage's slot, then either advance or finish
+    await signRecord(user, kind, id, stage?.title ?? SLOTS[kind].approver);
+    const nextIdx = (rec.approvalStage ?? 0) + 1;
+    const isFinal = nextIdx >= stages.length;
     // @ts-expect-error dynamic model union
     await model.update({
       where: { id },
-      data:
-        action === 'approve'
-          ? { status: 'APPROVED', approvedBy: user.name, approvedAt: new Date() }
-          : { status: 'REJECTED' },
+      data: isFinal
+        ? { status: 'APPROVED', approvalStage: nextIdx, approvedBy: user.name, approvedAt: new Date() }
+        : { approvalStage: nextIdx },
     });
-    await logAudit(user, recordType, id, action.toUpperCase(), undefined, rec.status, action === 'approve' ? 'APPROVED' : `REJECTED: ${reason ?? ''}`);
-    if (action === 'approve') {
-      // every approval lands in the integration outbox, SAP-shaped
+    await logAudit(user, recordType, id, 'APPROVE', undefined, rec.status,
+      isFinal ? 'APPROVED' : `stage ${nextIdx}/${stages.length} ("${stage?.title}") approved — waiting on "${stages[nextIdx]?.title}"`);
+    if (isFinal) {
+      // only the FINAL approval lands in the integration outbox, SAP-shaped
       await exportToOutbox(type === 'intake' ? 'INTAKE' : type === 'qc' ? 'QC' : 'PRODUCTION', id);
     }
-    return NextResponse.json({ ok: true, status: action === 'approve' ? 'APPROVED' : 'REJECTED' });
+    return NextResponse.json({ ok: true, status: isFinal ? 'APPROVED' : 'SUBMITTED', stage: nextIdx, of: stages.length });
+  }
+
+  if (action === 'delete') {
+    // drafts only — anything ever submitted stays forever (audit trail)
+    if (rec.status !== 'DRAFT') {
+      return NextResponse.json({ error: 'Only drafts can be deleted. Submitted and approved records are part of the audit trail.' }, { status: 400 });
+    }
+    await logAudit(user, recordType, id, 'DELETE', undefined, 'DRAFT', `draft ${rec.reportNo} deleted`);
+    await prisma.signature.deleteMany({ where: { recordType: kind === 'intake' ? 'INTAKE' : kind === 'qc' ? 'QC' : 'PRODUCTION', recordId: id } });
+    await prisma.integrationOutbox.deleteMany({ where: { recordId: id } });
+    // @ts-expect-error dynamic model union
+    await model.delete({ where: { id } }); // results/rows cascade
+    return NextResponse.json({ ok: true, deleted: true });
   }
 
   if (action === 'unlock') {
     if (!canUnlock(user.role)) return NextResponse.json({ error: 'Only a Manager or Admin can unlock' }, { status: 403 });
     if (rec.status !== 'APPROVED') return NextResponse.json({ error: 'Only approved records can be unlocked' }, { status: 400 });
     // @ts-expect-error dynamic model union
-    await model.update({ where: { id }, data: { status: 'SUBMITTED', approvedBy: null, approvedAt: null } });
+    await model.update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0, approvedBy: null, approvedAt: null } });
+    // an unlocked record can change — its signatures no longer attest to anything
+    await voidSignatures(user, kind, id);
     await logAudit(user, recordType, id, 'UNLOCK', undefined, 'APPROVED', `SUBMITTED (unlock reason: ${reason ?? 'not given'})`);
     return NextResponse.json({ ok: true, status: 'SUBMITTED' });
   }
@@ -161,8 +209,7 @@ async function saveIntake(id: string, body: any, user: any) {
     priceCutPerQuintal: num(h.priceCutPerQuintal),
     deductionAmount: num(h.deductionAmount),
     deductionRate: num(h.deductionRate),
-    godownKeeper: str(h.godownKeeper),
-    checkedBy: str(h.checkedBy),
+    // godownKeeper / checkedBy are set by the digital sign-off flow, not the form
   };
   const after = await prisma.intakeReport.update({ where: { id }, data });
   if (before.status !== 'DRAFT') await logFieldChanges(user, 'INTAKE', id, before as any, after as any);
@@ -239,7 +286,7 @@ async function saveQc(id: string, body: any, user: any) {
       premixActual: num(h.premixActual),
       doserWorking: h.doserWorking === true ? true : h.doserWorking === false ? false : null,
       premixRemarks: str(h.premixRemarks),
-      checkedBy: str(h.checkedBy),
+      // checkedBy is set by the digital sign-off flow, not the form
     },
   });
   if (before.status !== 'DRAFT') await logFieldChanges(user, 'QC', id, before as any, after as any);
@@ -312,7 +359,7 @@ async function saveProduction(id: string, body: any, user: any) {
       voltage: num(h.voltage),
       cumulativeKwh: num(h.cumulativeKwh),
       processExtras: h.processExtras ? JSON.stringify(h.processExtras) : null,
-      preparedBy: str(h.preparedBy),
+      // preparedBy is set by the digital sign-off flow, not the form
     },
   });
   if (before.status !== 'DRAFT') await logFieldChanges(user, 'PRODUCTION', id, before as any, after as any);

@@ -234,8 +234,11 @@ export function QcForm({ initial, canApprove, canUnlock, isManager }: { initial:
             <L label="Override reason (required)"><input className="field" disabled={!editable} value={header.overrideReason} onChange={(e) => setH('overrideReason', e.target.value)} /></L>
           )}
           <L label="Remarks"><input className="field" disabled={!editable} value={header.remarks} onChange={(e) => setH('remarks', e.target.value)} placeholder='e.g. "Accepted", "Ash of Suji is slightly low"' /></L>
-          <L label="Checked by"><input className="field" disabled={!editable} value={header.checkedBy} onChange={(e) => setH('checkedBy', e.target.value)} /></L>
         </div>
+        <p className="mt-3 text-xs text-stone-500">
+          &quot;Checked by&quot; and &quot;Approved by&quot; are digital now — submitting signs for you,
+          approval signs for the GM. See the <b>Digital sign-offs</b> panel below.
+        </p>
       </section>
     </div>
   );

@@ -57,7 +57,9 @@ export async function getSapConfig(): Promise<SapConfig> {
   const d = DEFAULTS[profile] ?? {};
   return {
     profile,
-    baseUrl: (s['sap.baseUrl'] ?? '').replace(/\/$/, ''),
+    // people paste Service Layer URLs with the /b1s/vN path attached — the
+    // connector adds its own paths, so strip any trailing slash and /b1s/vN
+    baseUrl: (s['sap.baseUrl'] ?? '').replace(/\/+$/, '').replace(/\/b1s\/v\d+$/i, ''),
     username: s['sap.username'] ?? '',
     // env var wins so the password can stay out of the database entirely
     password: process.env.SAP_PASSWORD || s['sap.password'] || '',

@@ -634,6 +634,10 @@ async function main() {
     data: { userName: 'seed', recordType: 'MASTER', recordId: 'seed', action: 'CREATE', newValue: 'Initial master data + demo batches seeded' },
   });
 
+  // digital sign-offs: starter signatures for users + rows on non-draft demo records
+  const { seedDemoSignatures } = await import('./demo-signatures');
+  await seedDemoSignatures(prisma);
+
   console.log('Seed complete. Login: admin / poonam / gm / godown / sup.rfm … password: hulas123');
   void adminU; void gmU;
 }

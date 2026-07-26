@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
-import { PrintHeader, PrintDates, SignRow, td, th } from '@/components/print-bits';
+import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
+import { getSignatures } from '@/lib/sign';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,10 +81,13 @@ export default async function PrintQc({ params }: { params: { id: string } }) {
       </div>
 
       <SignRow
-        signs={[
-          { label: 'Checked by', name: r.checkedBy },
-          { label: 'Approved by (GM)', name: r.approvedBy, at: r.approvedAt },
-        ]}
+        signs={toPrintSigns(
+          [
+            { slot: 'Checked by', legacyName: r.checkedBy },
+            { slot: 'Approved by (GM)', legacyName: r.approvedBy, legacyAt: r.approvedAt },
+          ],
+          await getSignatures('qc', r.id),
+        )}
       />
       <p className="mt-4 text-[10px] text-stone-500">
         Specs shown are the versions in force when this batch was tested.
