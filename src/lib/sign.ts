@@ -6,6 +6,7 @@
 import { prisma } from './db';
 import type { SessionUser } from './auth';
 import { logAudit } from './audit';
+import { canUnlock } from './constants';
 
 export type RecordKind = 'intake' | 'qc' | 'production';
 
@@ -54,6 +55,30 @@ export async function signRecord(user: SessionUser, kind: RecordKind, recordId: 
   await logAudit(user, recordType, recordId, 'SIGN', slot, null, user.name);
 }
 
+// Withdraw one signature while the record is still editable. The person who
+// signed may remove their own; a Manager/Admin may remove anyone's (audited
+// either way). Approver slots are never removed this way — that is what
+// Reject and Unlock are for, because they also roll the approval state back.
+export async function unsignRecord(user: SessionUser, kind: RecordKind, recordId: string, slot: string) {
+  const recordType = kind.toUpperCase();
+  const stageTitles = (await prisma.approvalStage.findMany({ where: { recordType } })).map((s) => s.title);
+  if (slot === SLOTS[kind].approver || stageTitles.includes(slot)) {
+    throw new Error('Approval signatures are removed by Reject or Unlock, not here.');
+  }
+  const sig = await prisma.signature.findUnique({ where: { recordType_recordId_slot: { recordType, recordId, slot } } });
+  if (!sig) return;
+  if (sig.userId !== user.id && !canUnlock(user.role)) {
+    throw new Error('Only the person who signed (or a Manager/Admin) can remove this signature.');
+  }
+  await prisma.signature.delete({ where: { id: sig.id } });
+  const legacy = LEGACY_FIELD[`${kind}:${slot}`];
+  if (legacy) {
+    // @ts-expect-error dynamic model union
+    await modelFor(kind).update({ where: { id: recordId }, data: { [legacy]: null } });
+  }
+  await logAudit(user, recordType, recordId, 'UNSIGN', slot, sig.userName, sig.userId === user.id ? 'removed own signature' : `removed by ${user.name}`);
+}
+
 // Unlock = the record can change again, so existing signatures no longer
 // attest to its content. Void them all; everyone re-signs on the next cycle.
 export async function voidSignatures(user: SessionUser, kind: RecordKind, recordId: string) {
@@ -88,6 +113,7 @@ export async function slotViews(kind: RecordKind, recordId: string) {
     return {
       ...base,
       signedBy: s?.userName ?? null,
+      signedById: s?.userId ?? null,
       signedAt: s?.signedAt.toISOString() ?? null,
       imageData: s?.imageData ?? null,
     };

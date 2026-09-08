@@ -4,7 +4,7 @@ import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
 import { getSignatures } from '@/lib/sign';
-import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from '@/lib/calc';
+import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct, packedTotalKg, kgToUnits, fmtInt } from '@/lib/calc';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,9 +27,15 @@ export default async function PrintProduction({ params }: { params: { id: string
   const netInput = r.inputs.reduce((a, i) => a + (i.netKg ?? 0), 0);
   const shiftMin = shiftMinutes(r.startTime, r.closeTime);
   const eff = efficiencyPct(shiftMin, r.breakdownMin ?? 0);
-  const totals = r.rows.map((row) => rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)));
-  const totalOutput = totals.reduce((a, b) => a + b, 0);
-  const mainOutput = r.rows.filter((x) => x.product.kind === 'PRODUCT').reduce((a, x) => a + rowTotalKg(x.semiFinishedKg, parsePacked(x.packedKg)), 0);
+  const rowsCalc = r.rows.map((row) => {
+    const kg = parsePacked(row.packedKg);
+    const units = row.packedUnits ? parsePacked(row.packedUnits) : kgToUnits(kg, packSizes);
+    return { row, kg, units, packed: packedTotalKg(kg), total: rowTotalKg(row.semiFinishedKg, kg) };
+  });
+  const totalOutput = rowsCalc.reduce((a, x) => a + x.total, 0);
+  const totalPacked = rowsCalc.reduce((a, x) => a + x.packed, 0);
+  const totalLoose = rowsCalc.reduce((a, x) => a + (x.row.semiFinishedKg || 0), 0);
+  const mainOutput = rowsCalc.filter((x) => x.row.product.kind === 'PRODUCT').reduce((a, x) => a + x.total, 0);
   const extras = r.processExtras ? JSON.parse(r.processExtras) : null;
 
   return (
@@ -69,7 +75,7 @@ export default async function PrintProduction({ params }: { params: { id: string
             <td className={td}>Man Power: <b>{r.manpower ?? '—'}</b></td>
             <td className={td}>Time: <b>{r.startTime ?? '—'} – {r.closeTime ?? '—'}</b> ({fmtMinutes(shiftMin)})</td>
             <td className={td}>Breakdown: <b>{fmtMinutes(r.breakdownMin ?? 0)}</b></td>
-            <td className={td}>Production time: <b>{fmtMinutes(shiftMin !== null ? shiftMin - (r.breakdownMin ?? 0) : null)}</b></td>
+            <td className={td}>Production time: <b>{fmtMinutes(shiftMin !== null ? Math.max(0, shiftMin - (r.breakdownMin ?? 0)) : null)}</b></td>
           </tr>
           <tr>
             <td className={td}>Efficiency: <b>{eff !== null ? `${eff}%` : '—'}</b></td>
@@ -94,34 +100,35 @@ export default async function PrintProduction({ params }: { params: { id: string
         <thead>
           <tr>
             <th className={th}>Product</th>
-            <th className={th}>Semi-fin. (kg)</th>
-            {packSizes.map((p) => <th key={p.id} className={th}>{p.label}</th>)}
+            <th className={th}>Semi-fin. loose (kg)</th>
+            {packSizes.map((p) => <th key={p.id} className={th}>{p.label}<br /><span className="font-normal">{p.grams >= 20000 ? 'bags' : 'pkts'} / kg</span></th>)}
+            <th className={th}>Packed (kg)</th>
             <th className={th}>Total (kg)</th>
             <th className={th}>%</th>
           </tr>
         </thead>
         <tbody>
-          {r.rows.map((row, i) => {
-            const packed = parsePacked(row.packedKg);
-            return (
-              <tr key={row.id}>
-                <td className={td}>{row.product.name}</td>
-                <td className={td}>{row.semiFinishedKg ? fmtKg(row.semiFinishedKg) : ''}</td>
-                {packSizes.map((p) => <td key={p.id} className={td}>{packed[p.id] ? fmtKg(packed[p.id]) : ''}</td>)}
-                <td className={`${td} font-medium`}>{totals[i] ? fmtKg(totals[i]) : ''}</td>
-                <td className={td}>{netInput && totals[i] ? fmtPct(round2((totals[i] / netInput) * 100)) : ''}</td>
-              </tr>
-            );
-          })}
+          {rowsCalc.map(({ row, kg, units, packed, total }) => (
+            <tr key={row.id}>
+              <td className={td}>{row.product.name}</td>
+              <td className={td}>{row.semiFinishedKg ? fmtKg(row.semiFinishedKg) : ''}</td>
+              {packSizes.map((p) => <td key={p.id} className={td}>{units[p.id] ? <>{fmtInt(units[p.id])}<span className="text-stone-500"> / {fmtKg(kg[p.id])}</span></> : ''}</td>)}
+              <td className={td}>{packed ? fmtKg(packed) : ''}</td>
+              <td className={`${td} font-medium`}>{total ? fmtKg(total) : ''}</td>
+              <td className={td}>{netInput && total ? fmtPct(round2((total / netInput) * 100)) : ''}</td>
+            </tr>
+          ))}
           <tr>
             <td className={`${td} font-bold`}>Total output</td>
-            <td className={td} colSpan={packSizes.length + 1}></td>
+            <td className={`${td} font-bold`}>{totalLoose ? fmtKg(totalLoose) : ''}</td>
+            <td className={td} colSpan={packSizes.length}></td>
+            <td className={`${td} font-bold`}>{totalPacked ? fmtKg(totalPacked) : ''}</td>
             <td className={`${td} font-bold`}>{fmtKg(totalOutput)}</td>
             <td className={`${td} font-bold`}>{netInput ? fmtPct(round2((totalOutput / netInput) * 100)) : ''}</td>
           </tr>
           <tr>
             <td className={`${td} font-bold`}>Actual yield (main products)</td>
-            <td className={td} colSpan={packSizes.length + 1}></td>
+            <td className={td} colSpan={packSizes.length + 2}></td>
             <td className={`${td} font-bold`}>{fmtKg(mainOutput)}</td>
             <td className={`${td} font-bold`}>{netInput ? fmtPct(round2((mainOutput / netInput) * 100)) : ''}</td>
           </tr>

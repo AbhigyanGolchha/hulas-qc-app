@@ -88,7 +88,7 @@ export default async function ApprovalsAdmin({ searchParams }: { searchParams: {
     <Shell user={user} active="/admin">
       <PageTitle
         title="Approval flow"
-        subtitle="Who signs off, and in what order, before a report is final. One step = the classic single approval. Add more steps for a chain — the report only reaches SAP after the LAST step approves."
+        subtitle="Who signs off, and in what order, before a report is final. One step = the classic single approval. Add more steps for a chain — the report is only sealed (and emailed as approved) after the LAST step approves."
       />
       {searchParams.msg && <div className="mb-4 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">{searchParams.msg}</div>}
       {searchParams.err && <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{searchParams.err}</div>}
@@ -145,7 +145,7 @@ export default async function ApprovalsAdmin({ searchParams }: { searchParams: {
       <p className="mt-4 max-w-3xl rounded border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-500">
         Changes apply to reports approved from now on. A report already mid-chain keeps its progress; if you shorten a chain
         below a report&apos;s progress, a Manager can finish it. Rejection at any step sends the report back to the editor and
-        clears approval signatures. Nothing reaches SAP until the final step approves.
+        clears approval signatures. The report is final only after the last step approves.
       </p>
     </Shell>
   );

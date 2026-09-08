@@ -23,16 +23,18 @@ function parseHm(t?: string | null): number | null {
 
 export function fmtMinutes(min: number | null | undefined): string {
   if (min === null || min === undefined) return '—';
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
+  const total = Math.round(min); // round first so 59.7 min never prints as "60 min" or "1 hr 60 min"
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   if (h === 0) return `${m} min`;
   return `${h} hr ${m ? m + ' min' : ''}`.trim();
 }
 
-// Efficiency % = production time / shift time
+// Efficiency % = production time / shift time (production time = shift − breakdown).
+// Breakdown longer than the shift is a data error — clamp at 0 rather than print a negative %.
 export function efficiencyPct(shiftMin: number | null, breakdownMin: number | null): number | null {
   if (shiftMin === null || !shiftMin) return null;
-  const prod = shiftMin - (breakdownMin ?? 0);
+  const prod = Math.max(0, shiftMin - (breakdownMin ?? 0));
   return round2((prod / shiftMin) * 100);
 }
 
@@ -50,10 +52,47 @@ export function fmtPct(n: number | null | undefined, dp = 2): string {
   return n.toFixed(dp) + '%';
 }
 
-// Production row total = semi-finished + Σ packed kg
+export function fmtInt(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—';
+  return n.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+// ---------- Production rows: bags ↔ kg ----------
+// The floor counts bags/packets per pack size; kg is derived from the pack
+// size's grams. "Semi-finished" is product NOT yet packed (loose, in bins) —
+// so the row total is semi-finished + packed, never the packed weight twice.
+
+export type PackDef = { id: string; grams: number };
+
+// { packSizeId: units } → { packSizeId: kg }
+export function unitsToKg(units: Record<string, number>, packs: PackDef[]): Record<string, number> {
+  const grams = Object.fromEntries(packs.map((p) => [p.id, p.grams]));
+  const out: Record<string, number> = {};
+  for (const [pid, n] of Object.entries(units)) {
+    if (!n || !grams[pid]) continue;
+    out[pid] = round2((n * grams[pid]) / 1000);
+  }
+  return out;
+}
+
+// { packSizeId: kg } → { packSizeId: units } (for rows saved before bag counts existed)
+export function kgToUnits(kg: Record<string, number>, packs: PackDef[]): Record<string, number> {
+  const grams = Object.fromEntries(packs.map((p) => [p.id, p.grams]));
+  const out: Record<string, number> = {};
+  for (const [pid, k] of Object.entries(kg)) {
+    if (!k || !grams[pid]) continue;
+    out[pid] = Math.round(((k * 1000) / grams[pid]) * 100) / 100;
+  }
+  return out;
+}
+
+export function packedTotalKg(packedKg: Record<string, number>): number {
+  return Object.values(packedKg).reduce((a, b) => a + (b || 0), 0);
+}
+
+// Production row total = semi-finished (loose) + Σ packed kg
 export function rowTotalKg(semiFinishedKg: number | null | undefined, packedKg: Record<string, number>): number {
-  const packed = Object.values(packedKg).reduce((a, b) => a + (b || 0), 0);
-  return (semiFinishedKg || 0) + packed;
+  return (semiFinishedKg || 0) + packedTotalKg(packedKg);
 }
 
 export function parsePacked(json?: string | null): Record<string, number> {
@@ -64,6 +103,13 @@ export function parsePacked(json?: string | null): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+// Net input of one raw-material line: kanta (gross) − bora (tare). A tare
+// heavier than the gross is a typo — treated as 0 here and blocked at submit.
+export function netInputKg(kantaKg: number | null | undefined, boraKg: number | null | undefined): number | null {
+  if (kantaKg === null || kantaKg === undefined) return null;
+  return Math.max(0, kantaKg - (boraKg ?? 0));
 }
 
 // ---------- Purchase value & deductions (intake) ----------
@@ -127,7 +173,7 @@ export function checkYields(
   if (limits.totalRecoveryMin != null && total < limits.totalRecoveryMin)
     warnings.push(`Total recovery ${total}% is below the expected minimum of ${limits.totalRecoveryMin}% — check for missing output rows or a wrong input weight.`);
   if (limits.totalRecoveryMax != null && total > limits.totalRecoveryMax)
-    warnings.push(`Total recovery ${total}% is above the expected maximum of ${limits.totalRecoveryMax}% — output can't exceed input by this much; check the weights.`);
+    warnings.push(`Total recovery ${total}% is above the expected maximum of ${limits.totalRecoveryMax}% — output can't exceed input by this much. Common cause: the "Semi-finished" column should only hold product that is NOT packed yet; don't repeat the packed weight there.`);
   if (limits.mainYieldMin != null && main < limits.mainYieldMin)
     warnings.push(`Main-product yield ${main}% is below the usual ${limits.mainYieldMin}%.`);
   if (limits.mainYieldMax != null && main > limits.mainYieldMax)

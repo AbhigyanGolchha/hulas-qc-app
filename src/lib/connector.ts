@@ -24,6 +24,7 @@
 import { prisma } from './db';
 
 export type SapConfig = {
+  enabled: boolean; // master switch (setting integrations.sap = "on"). Off = nothing is queued or posted; supplier import still works.
   profile: 'mock' | 's4hana' | 'b1';
   baseUrl: string;
   username: string;
@@ -50,12 +51,20 @@ const DEFAULTS: Record<string, Partial<SapConfig>> = {
   mock: { pathInspectionLot: '', pathConfirmation: '' },
 };
 
+// SAP posting is OFF unless an admin switches it on (Admin → SAP connection).
+// Decided 2026-09-08: posting QC/production rows into B1 brings nothing yet.
+export async function isSapEnabled(): Promise<boolean> {
+  const s = await prisma.setting.findUnique({ where: { key: 'integrations.sap' } });
+  return s?.value === 'on';
+}
+
 export async function getSapConfig(): Promise<SapConfig> {
-  const rows = await prisma.setting.findMany({ where: { key: { startsWith: 'sap.' } } });
+  const rows = await prisma.setting.findMany({ where: { OR: [{ key: { startsWith: 'sap.' } }, { key: 'integrations.sap' }] } });
   const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   const profile = (s['sap.profile'] as SapConfig['profile']) || 'mock';
   const d = DEFAULTS[profile] ?? {};
   return {
+    enabled: s['integrations.sap'] === 'on',
     profile,
     // people paste Service Layer URLs with the /b1s/vN path attached — the
     // connector adds its own paths, so strip any trailing slash and /b1s/vN
@@ -303,6 +312,10 @@ export async function deliverRow(id: string): Promise<{ ok: boolean; docNo?: str
   const payload = JSON.parse(row.payload);
   const isQm = row.recordType === 'SAP_QM_INSPECTION_LOT';
 
+  // posting switched off: never touch SAP, never burn an attempt
+  if (!cfg.enabled) {
+    return { ok: false, error: 'SAP posting is switched off (Admin → SAP connection) — row left pending, nothing sent.' };
+  }
   // config incomplete = not a delivery failure: leave the row untouched (no
   // attempt burned) so the queue survives until IT hands over access
   if (cfg.profile !== 'mock' && !cfg.baseUrl) {
@@ -334,20 +347,28 @@ export async function deliverRow(id: string): Promise<{ ok: boolean; docNo?: str
     return { ok: true, docNo };
   } catch (e) {
     const attempts = row.attempts + 1;
+    const parked = attempts >= MAX_ATTEMPTS;
     await prisma.integrationOutbox.update({
       where: { id },
       data: {
-        status: attempts >= MAX_ATTEMPTS ? 'FAILED' : 'PENDING',
+        status: parked ? 'FAILED' : 'PENDING',
         attempts,
         lastTriedAt: new Date(),
         lastError: String(e).slice(0, 1000),
       },
     });
+    if (parked) {
+      // a human has to look now — tell the admins (never blocks delivery)
+      const { notifyEvent } = await import('./notify');
+      const kind = payload.record_type === 'SAP_PROD_ORDER_CONFIRMATION' ? 'production' : payload.inspection_lot_origin === '04' ? 'qc' : 'intake';
+      void notifyEvent({ event: 'SAP_FAILED', kind, recordId: row.recordId, extraLines: [`Error: ${String(e).slice(0, 300)}`, `Attempts: ${attempts}`] });
+    }
     return { ok: false, error: String(e) };
   }
 }
 
 export async function syncPending(limit = 50): Promise<{ sent: number; failed: number }> {
+  if (!(await isSapEnabled())) return { sent: 0, failed: 0 };
   const rows = await prisma.integrationOutbox.findMany({
     where: { status: 'PENDING' },
     orderBy: { createdAt: 'asc' },
@@ -367,7 +388,7 @@ export async function syncPending(limit = 50): Promise<{ sent: number; failed: n
 export async function autoDeliver(outboxId: string) {
   try {
     const cfg = await getSapConfig();
-    if (cfg.autoSend) await deliverRow(outboxId);
+    if (cfg.enabled && cfg.autoSend) await deliverRow(outboxId);
   } catch {
     // errors are recorded on the row; the worker/manual sync retries
   }

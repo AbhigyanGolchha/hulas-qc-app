@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle } from '@/components/ui';
+import { fmtNpt } from '@/lib/dates';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,13 +17,14 @@ export default async function AuditPage({ searchParams }: { searchParams: { type
   });
   return (
     <Shell user={user} active="/admin">
-      <PageTitle title="Audit log" subtitle="Submits, approvals, rejections, unlocks and post-submission field edits." />
+      <PageTitle title="Audit log" subtitle="Sign-ins, submits, approvals, rejections, unlocks, signatures and post-submission field edits. Times in Nepal time (GMT+5:45)." />
       <form method="get" className="mb-3 text-sm">
         <select name="type" defaultValue={searchParams.type ?? ''} className="field w-44" onChange={undefined}>
           <option value="">All record types</option>
           <option value="INTAKE">Intake</option>
           <option value="QC">Product QC</option>
           <option value="PRODUCTION">Production</option>
+          <option value="AUTH">Sign-ins & passwords</option>
           <option value="SPEC">Spec changes</option>
           <option value="MASTER">Master data</option>
         </select>{' '}
@@ -36,7 +38,7 @@ export default async function AuditPage({ searchParams }: { searchParams: { type
           <tbody>
             {logs.map((l) => (
               <tr key={l.id} className="border-t border-stone-100 align-top">
-                <td className="whitespace-nowrap px-3 py-1.5 text-xs text-stone-500">{l.at.toISOString().replace('T', ' ').slice(0, 19)}</td>
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs text-stone-500">{fmtNpt(l.at, { seconds: true, suffix: false })}</td>
                 <td className="px-3 py-1.5">{l.userName}</td>
                 <td className="px-3 py-1.5 text-xs">{l.recordType}<br /><span className="text-stone-400">{l.recordId.slice(0, 8)}</span></td>
                 <td className="px-3 py-1.5 font-medium">{l.action}</td>

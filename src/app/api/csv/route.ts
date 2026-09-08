@@ -2,8 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSessionUser } from '@/lib/auth';
-import { adIso } from '@/lib/dates';
+import { adIso, todayKathmandu } from '@/lib/dates';
 import { parsePacked, rowTotalKg, shiftMinutes, efficiencyPct } from '@/lib/calc';
+import { buildWeekly, resolveWeekStart, weeklyCsvRows } from '@/lib/weekly';
 
 function csv(rows: (string | number | null | undefined)[][]): string {
   return rows
@@ -89,14 +90,19 @@ export async function GET(req: NextRequest) {
       }),
     ]);
     name = 'production';
+  } else if (type === 'weekly') {
+    const start = resolveWeekStart(p.get('start') ?? undefined);
+    const w = await buildWeekly(start);
+    body = csv(weeklyCsvRows(w));
+    name = `weekly-${w.start}`;
   } else {
-    return NextResponse.json({ error: 'type must be intake|qc|production' }, { status: 400 });
+    return NextResponse.json({ error: 'type must be intake|qc|production|weekly' }, { status: 400 });
   }
 
   return new NextResponse('﻿' + body, {
     headers: {
       'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="hulas-${name}-${new Date().toISOString().slice(0, 10)}.csv"`,
+      'Content-Disposition': `attachment; filename="hulas-${name}-${todayKathmandu()}.csv"`,
     },
   });
 }

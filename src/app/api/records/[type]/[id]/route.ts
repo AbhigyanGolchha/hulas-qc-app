@@ -1,20 +1,18 @@
 // Central record API. PATCH = save form snapshot (autosave), POST = workflow
-// action { action: submit | approve | reject | unlock | sign | delete, reason?, slot? }.
+// action { action: submit | approve | reject | unlock | sign | unsign | delete, reason?, slot? }.
 // Server re-evaluates every spec (client colors are advisory only).
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSessionUser } from '@/lib/auth';
 import { logAudit, logFieldChanges } from '@/lib/audit';
 import { evaluate, sampleAverage, suggestOverall } from '@/lib/spec';
-import { canApprove, canUnlock } from '@/lib/constants';
-import { durationMinutes } from '@/lib/calc';
-import { exportToOutbox } from '@/lib/sap';
-import { signRecord, voidSignatures, defaultSlot, SLOTS, type RecordKind } from '@/lib/sign';
-import { getStages, currentStage, roleMayApprove } from '@/lib/approval';
+import { durationMinutes, netInputKg, unitsToKg } from '@/lib/calc';
+import { signRecord, unsignRecord, defaultSlot, SLOTS, type RecordKind } from '@/lib/sign';
+import { EDITABLE, WorkflowError, approveRecord, rejectRecord, submitRecord, unlockRecord, loadRecord } from '@/lib/workflow';
 
 type Params = { params: { type: string; id: string } };
 
-const EDITABLE = ['DRAFT', 'SUBMITTED', 'REJECTED'];
+const KINDS: RecordKind[] = ['intake', 'qc', 'production'];
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const user = await getSessionUser();
@@ -28,7 +26,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (type === 'production') return await saveProduction(id, body, user);
     return NextResponse.json({ error: 'Unknown record type' }, { status: 404 });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 500 });
+    return NextResponse.json({ error: String((e as Error).message ?? e) }, { status: 500 });
   }
 }
 
@@ -36,135 +34,58 @@ export async function POST(req: NextRequest, { params }: Params) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const { action, reason, slot } = await req.json();
-  const { type, id } = params;
-  const recordType = type.toUpperCase();
-  const kind = type as RecordKind;
+  const kind = params.type as RecordKind;
+  if (!KINDS.includes(kind)) return NextResponse.json({ error: 'Unknown record type' }, { status: 404 });
+  const id = params.id;
+  const recordType = kind.toUpperCase();
 
-  const model =
-    type === 'intake' ? prisma.intakeReport : type === 'qc' ? prisma.qcReport : type === 'production' ? prisma.productionReport : null;
-  if (!model) return NextResponse.json({ error: 'Unknown record type' }, { status: 404 });
-  // @ts-expect-error dynamic model union
-  const rec = await model.findUnique({ where: { id } });
-  if (!rec) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  try {
+    const rec = await loadRecord(kind, id);
 
-  if (action === 'submit') {
-    if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Record is not editable' }, { status: 400 });
-    const missing = await validateForSubmit(type, id);
-    if (missing.length) return NextResponse.json({ error: 'missing', missing }, { status: 422 });
-    // @ts-expect-error dynamic model union
-    await model.update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0 } });
-    // submitting IS signing: the submitter's e-signature lands in their slot
-    await signRecord(user, kind, id, defaultSlot(kind, user.role));
-    await logAudit(user, recordType, id, 'SUBMIT');
-    return NextResponse.json({ ok: true, status: 'SUBMITTED' });
-  }
+    if (action === 'submit') return NextResponse.json({ ok: true, ...(await submitRecord(user, kind, id)) });
+    if (action === 'approve') return NextResponse.json({ ok: true, ...(await approveRecord(user, kind, id)) });
+    if (action === 'reject') return NextResponse.json({ ok: true, ...(await rejectRecord(user, kind, id, reason)) });
+    if (action === 'unlock') return NextResponse.json({ ok: true, ...(await unlockRecord(user, kind, id, reason)) });
 
-  if (action === 'sign') {
-    // manual co-sign (e.g. the godown keeper on an intake report)
-    if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Approved records cannot be signed — they are already sealed' }, { status: 400 });
-    const target = slot || defaultSlot(kind, user.role);
-    if (target === SLOTS[kind].approver) return NextResponse.json({ error: 'The approver slot is signed by the Approve action' }, { status: 400 });
-    await signRecord(user, kind, id, target);
-    return NextResponse.json({ ok: true });
-  }
-
-  if (action === 'approve' || action === 'reject') {
-    if (rec.status !== 'SUBMITTED') return NextResponse.json({ error: 'Only submitted records can be approved/rejected' }, { status: 400 });
-    const stages = await getStages(kind);
-    const stage = currentStage(stages, rec.approvalStage ?? 0);
-    // orphaned mid-flow record (chain was shortened): managers may finish it
-    if (stage ? !roleMayApprove(stage, user.role) : !canApprove(user.role)) {
-      return NextResponse.json({ error: `This step is for the ${stage?.role ?? 'MANAGER'} role ("${stage?.title ?? 'approver'}")` }, { status: 403 });
+    if (action === 'sign') {
+      // manual co-sign (e.g. the godown keeper on an intake report)
+      if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Approved records cannot be signed — they are already sealed' }, { status: 400 });
+      const target = slot || defaultSlot(kind, user.role);
+      if (target === SLOTS[kind].approver) return NextResponse.json({ error: 'The approver slot is signed by the Approve action' }, { status: 400 });
+      await signRecord(user, kind, id, target);
+      return NextResponse.json({ ok: true });
     }
-    if (action === 'reject' && !reason?.trim()) return NextResponse.json({ error: 'A rejection reason is required' }, { status: 422 });
 
-    if (action === 'reject') {
+    if (action === 'unsign') {
+      // take a signature back while the record is still editable (own slot, or any slot for Manager/Admin)
+      if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Approved records are sealed — a Manager must unlock first' }, { status: 400 });
+      if (!slot) return NextResponse.json({ error: 'slot is required' }, { status: 400 });
+      await unsignRecord(user, kind, id, slot);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (action === 'delete') {
+      // drafts only — anything ever submitted stays forever (audit trail)
+      if (rec.status !== 'DRAFT') {
+        return NextResponse.json({ error: 'Only drafts can be deleted. Submitted and approved records are part of the audit trail.' }, { status: 400 });
+      }
+      await logAudit(user, recordType, id, 'DELETE', undefined, 'DRAFT', `draft ${rec.reportNo} deleted`);
+      await prisma.signature.deleteMany({ where: { recordType, recordId: id } });
+      await prisma.notification.updateMany({ where: { recordId: id, status: { in: ['PENDING', 'SKIPPED'] } }, data: { status: 'SKIPPED', lastError: 'record deleted' } });
+      await prisma.integrationOutbox.deleteMany({ where: { recordId: id } });
+      const model = kind === 'intake' ? prisma.intakeReport : kind === 'qc' ? prisma.qcReport : prisma.productionReport;
       // @ts-expect-error dynamic model union
-      await model.update({ where: { id }, data: { status: 'REJECTED', approvalStage: 0 } });
-      // approver signatures no longer attest to anything — preparer slots stay
-      await prisma.signature.deleteMany({ where: { recordType, recordId: id, slot: { in: stages.map((s) => s.title) } } });
-      await logAudit(user, recordType, id, 'REJECT', undefined, rec.status, `REJECTED at "${stage?.title ?? 'approval'}": ${reason ?? ''}`);
-      return NextResponse.json({ ok: true, status: 'REJECTED' });
+      await model.delete({ where: { id } }); // results/rows cascade
+      return NextResponse.json({ ok: true, deleted: true });
     }
 
-    // approve: sign this stage's slot, then either advance or finish
-    await signRecord(user, kind, id, stage?.title ?? SLOTS[kind].approver);
-    const nextIdx = (rec.approvalStage ?? 0) + 1;
-    const isFinal = nextIdx >= stages.length;
-    // @ts-expect-error dynamic model union
-    await model.update({
-      where: { id },
-      data: isFinal
-        ? { status: 'APPROVED', approvalStage: nextIdx, approvedBy: user.name, approvedAt: new Date() }
-        : { approvalStage: nextIdx },
-    });
-    await logAudit(user, recordType, id, 'APPROVE', undefined, rec.status,
-      isFinal ? 'APPROVED' : `stage ${nextIdx}/${stages.length} ("${stage?.title}") approved — waiting on "${stages[nextIdx]?.title}"`);
-    if (isFinal) {
-      // only the FINAL approval lands in the integration outbox, SAP-shaped
-      await exportToOutbox(type === 'intake' ? 'INTAKE' : type === 'qc' ? 'QC' : 'PRODUCTION', id);
+    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  } catch (e) {
+    if (e instanceof WorkflowError) {
+      return NextResponse.json(e.missing ? { error: e.message, missing: e.missing } : { error: e.message }, { status: e.status });
     }
-    return NextResponse.json({ ok: true, status: isFinal ? 'APPROVED' : 'SUBMITTED', stage: nextIdx, of: stages.length });
+    return NextResponse.json({ error: String((e as Error).message ?? e) }, { status: 400 });
   }
-
-  if (action === 'delete') {
-    // drafts only — anything ever submitted stays forever (audit trail)
-    if (rec.status !== 'DRAFT') {
-      return NextResponse.json({ error: 'Only drafts can be deleted. Submitted and approved records are part of the audit trail.' }, { status: 400 });
-    }
-    await logAudit(user, recordType, id, 'DELETE', undefined, 'DRAFT', `draft ${rec.reportNo} deleted`);
-    await prisma.signature.deleteMany({ where: { recordType: kind === 'intake' ? 'INTAKE' : kind === 'qc' ? 'QC' : 'PRODUCTION', recordId: id } });
-    await prisma.integrationOutbox.deleteMany({ where: { recordId: id } });
-    // @ts-expect-error dynamic model union
-    await model.delete({ where: { id } }); // results/rows cascade
-    return NextResponse.json({ ok: true, deleted: true });
-  }
-
-  if (action === 'unlock') {
-    if (!canUnlock(user.role)) return NextResponse.json({ error: 'Only a Manager or Admin can unlock' }, { status: 403 });
-    if (rec.status !== 'APPROVED') return NextResponse.json({ error: 'Only approved records can be unlocked' }, { status: 400 });
-    // @ts-expect-error dynamic model union
-    await model.update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0, approvedBy: null, approvedAt: null } });
-    // an unlocked record can change — its signatures no longer attest to anything
-    await voidSignatures(user, kind, id);
-    await logAudit(user, recordType, id, 'UNLOCK', undefined, 'APPROVED', `SUBMITTED (unlock reason: ${reason ?? 'not given'})`);
-    return NextResponse.json({ ok: true, status: 'SUBMITTED' });
-  }
-
-  return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
-}
-
-// ---------- validation at submit (drafts may stay half-filled) ----------
-
-async function validateForSubmit(type: string, id: string): Promise<string[]> {
-  const missing: string[] = [];
-  if (type === 'intake') {
-    const r = await prisma.intakeReport.findUniqueOrThrow({ where: { id }, include: { results: true } });
-    if (!r.supplierId) missing.push('Supplier / Party name');
-    if (!r.weightKg) missing.push('Weight (kg)');
-    if (!r.decision) missing.push('Decision (Accepted / Accepted with deduction / Rejected)');
-    if ((r.decision === 'REJECTED' || r.decision === 'ACCEPTED_DEDUCTION') && !r.decisionReason?.trim())
-      missing.push('Reason for the decision');
-    if (r.decision === 'ACCEPTED_DEDUCTION'
-        && r.weightCutKg == null && r.priceCutPerQuintal == null && r.deductionAmount == null && r.deductionRate == null)
-      missing.push('At least one deduction (weight cut, price cut or flat amount)');
-    if (r.decision === 'ACCEPTED_DEDUCTION' && r.pricePerQuintal == null)
-      missing.push('Purchase price (₨/quintal) — needed to compute the payable amount');
-    if (!r.results.some((x) => x.valueNum !== null || x.valueText)) missing.push('At least one test result');
-  }
-  if (type === 'qc') {
-    const r = await prisma.qcReport.findUniqueOrThrow({ where: { id }, include: { results: true } });
-    if (!r.results.some((x) => x.resultNum !== null || x.resultText)) missing.push('At least one test result');
-    if (!r.overallResult) missing.push('Overall Result (PASS / FAIL)');
-    if (r.overallOverridden && !r.overrideReason?.trim()) missing.push('Reason for overriding the suggested result');
-  }
-  if (type === 'production') {
-    const r = await prisma.productionReport.findUniqueOrThrow({ where: { id }, include: { inputs: true, rows: true } });
-    if (!r.inputs.some((i) => (i.netKg ?? 0) > 0)) missing.push('At least one raw material input with a net weight');
-    if (!r.rows.length) missing.push('At least one production row');
-    if (!r.startTime || !r.closeTime) missing.push('Shift starting and closing time');
-  }
-  return missing;
 }
 
 // ---------- save handlers ----------
@@ -303,7 +224,7 @@ async function saveProduction(id: string, body: any, user: any) {
   let autoBreakdown = 0;
   let dSort = 1;
   for (const d of body.downtime ?? []) {
-    const dur = num(d.durationMin) ?? durationMinutes(str(d.fromTime), str(d.toTime));
+    const dur = durationMinutes(str(d.fromTime), str(d.toTime));
     if (dur) autoBreakdown += dur;
     await prisma.downtimeEntry.create({
       data: {
@@ -325,7 +246,7 @@ async function saveProduction(id: string, body: any, user: any) {
         reportId: id,
         invoiceNo: str(i.invoiceNo),
         kantaKg: kanta, boraKg: bora,
-        netKg: kanta !== null ? kanta - (bora ?? 0) : null,
+        netKg: netInputKg(kanta, bora),
         bagType: str(i.bagType),
         intakeReportId: i.intakeReportId || null,
         sortOrder: iSort++,
@@ -333,15 +254,26 @@ async function saveProduction(id: string, body: any, user: any) {
     });
   }
 
+  // pack columns arrive as bag/packet counts; kg is derived from the pack size master
+  const packs = await prisma.packSize.findMany({ select: { id: true, grams: true } });
   for (const row of body.rows ?? []) {
     const existing = await prisma.productionRow.findFirst({ where: { reportId: id, productId: row.productId } });
-    const packed = row.packedKg && typeof row.packedKg === 'object' ? JSON.stringify(row.packedKg) : null;
-    if (existing) {
-      await prisma.productionRow.update({
-        where: { id: existing.id },
-        data: { semiFinishedKg: num(row.semiFinishedKg), packedKg: packed },
-      });
+    if (!existing) continue;
+    const units: Record<string, number> = {};
+    if (row.packedUnits && typeof row.packedUnits === 'object') {
+      for (const [pid, v] of Object.entries(row.packedUnits)) {
+        const n = num(v);
+        if (n !== null && n > 0) units[pid] = n;
+      }
     }
+    await prisma.productionRow.update({
+      where: { id: existing.id },
+      data: {
+        semiFinishedKg: num(row.semiFinishedKg),
+        packedUnits: JSON.stringify(units),
+        packedKg: JSON.stringify(unitsToKg(units, packs)),
+      },
+    });
   }
 
   const after = await prisma.productionReport.update({
@@ -353,7 +285,8 @@ async function saveProduction(id: string, body: any, user: any) {
       vendors: str(h.vendors),
       manpower: num(h.manpower),
       startTime: str(h.startTime), closeTime: str(h.closeTime),
-      breakdownMin: h.breakdownOverridden ? num(h.breakdownMin) : autoBreakdown || num(h.breakdownMin),
+      // auto = Σ downtime log; a ticked override keeps whatever the supervisor typed
+      breakdownMin: h.breakdownOverridden ? num(h.breakdownMin) : autoBreakdown,
       cumulativeMT: num(h.cumulativeMT),
       electricityKwh: num(h.electricityKwh),
       voltage: num(h.voltage),

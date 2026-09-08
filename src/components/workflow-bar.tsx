@@ -13,6 +13,7 @@ export function WorkflowBar({
   canApprove,
   canUnlock,
   beforeSubmit,
+  sapEnabled = false,
 }: {
   type: 'intake' | 'qc' | 'production';
   id: string;
@@ -20,6 +21,7 @@ export function WorkflowBar({
   canApprove: boolean;
   canUnlock: boolean;
   beforeSubmit?: () => Promise<void>; // flush autosave first
+  sapEnabled?: boolean; // shows the SAP JSON export only when the integration is switched on
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -83,9 +85,11 @@ export function WorkflowBar({
         <a className="btn-secondary" href={`/print/${type}/${id}`} target="_blank">
           Print / PDF
         </a>
-        <a className="btn-secondary" href={`/api/export/${type}/${id}`} target="_blank">
-          Export JSON (SAP)
-        </a>
+        {sapEnabled && (
+          <a className="btn-secondary" href={`/api/export/${type}/${id}`} target="_blank">
+            Export JSON (SAP)
+          </a>
+        )}
       </div>
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {missing.length > 0 && (

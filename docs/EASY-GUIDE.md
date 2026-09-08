@@ -55,15 +55,48 @@ Only needed when you add a NEW kind of data (a new column or table):
 npm run db:push
 ```
 
-### Step 4. Broke everything? Reset to demo data
+### Step 4. Start testing from zero (keep the setup, throw away the reports)
 
-This erases ALL entered data and gives you a fresh demo. Only do this on a
-practice computer, never on the real plant server:
+```bash
+npm run db:reset
+```
+
+This deletes every report, batch, signature and every user except `admin`,
+but keeps mills, products, spec limits, suppliers, SAP and email settings.
+Admin is asked to choose a new password at the next sign-in.
+
+### Step 5. Broke everything? Fresh demo
+
+This erases ALL data and gives you a fresh demo with demo logins. Only do
+this on a practice computer, never on the real plant server:
 
 ```bash
 rm prisma/dev.db
-npm run setup
+npm run setup:demo
 ```
+
+(`npm run setup` without `:demo` gives a clean install with only master data
+and one admin account — that is what the plant server should get.)
+
+---
+
+## Part 2b — People, passwords and emails
+
+- **Accounts** are made in **Admin → Users**. Fill name, username, email and
+  role, press *Create account*. The app shows a temporary password **once**
+  (and emails it if the person has an email). They pick their own password
+  the first time they sign in.
+- **Forgot password?** Admin → Users → open the person → *Reset password*.
+- **Locked out?** After 5 wrong passwords an account locks for 15 minutes.
+  Admin → Users → *Unlock now* if they can't wait.
+- **Emails** go out through **Admin → Notifications**. Fill in the SMTP
+  server (for Microsoft 365: `smtp.office365.com`, port 587, the mailbox
+  login; for Gmail: `smtp.gmail.com`, port 587, an *App password*), tick
+  *Send emails*, press *Send test*. Then tick, per event, which roles should
+  be told (managers get "submitted", the preparer always gets "approved" /
+  "rejected", admins get "SAP failed", and so on). Until email is switched
+  on, the log at the bottom still shows what *would* have been sent.
+- Every person can mute events and set their own email on **My profile**.
 
 ### The golden rule
 
@@ -78,7 +111,15 @@ npm run start
 
 ---
 
-## Part 3 — How to connect SAP (Business One)
+## Part 3 — SAP (Business One) — currently switched OFF
+
+Since 2026-09-08 the app does **not** send anything to SAP. Approved reports
+stay in the app. The only SAP feature in use is **Pull suppliers from SAP**
+(Admin → SAP Business One), which keeps the supplier list the same as B1's.
+
+If one day you want approved reports to land in SAP again: Admin → SAP
+Business One → tick **Post approved reports to SAP** → Save. Then the rest of
+this part applies.
 
 The app already knows how to talk to SAP. Think of it like a **post office**:
 
@@ -160,6 +201,9 @@ the whole connection dance works. (Verified working on 2026-07-26.)
 | SAP row says FAILED | Admin → Integration outbox → read the error → fix (usually password/URL) → press **Retry**. |
 | "Test connection" is red | Check the URL has `https://` and port `:50000`, and the password is right. |
 | Forgot a password | Log in as `admin` and reset the user in Admin → Users. |
+| Account locked | Wait 15 minutes, or Admin → Users → Unlock now. |
+| Emails not arriving | Admin → Notifications → *Test SMTP login*; read the red error; check the person has an email address and hasn't muted the event on their profile. |
+| Production report says recovery is over 100% | The "Semi-finished" column is only for product **not yet packed**. Don't type the packed weight there again — the pack columns already count it (as bags). |
 | App won't start | `npm install` again, then `npm run dev`. |
 
 ---
@@ -170,9 +214,12 @@ the whole connection dance works. (Verified working on 2026-07-26.)
 npm run dev          # develop: start app, auto-reloads on save
 npm run build        # server: prepare the fast version
 npm run start        # server: run the fast version
-npm run setup        # FRESH database + demo data (erases everything!)
+npm run setup        # FRESH database: master data + one admin (clean install)
+npm run setup:demo   # FRESH database + demo logins + demo reports (practice only)
+npm run db:reset     # wipe reports/users, KEEP master data + SAP/email settings
 npm run db:push      # apply database shape changes
 npm run b1:test      # practice SAP with the pretend server
 npm run b1:provision # one-time real-SAP setup (needs superuser)
 npm run sap:worker   # delivery robot: keeps retrying SAP sends
+npm run mail:worker  # email robot: keeps retrying queued emails
 ```

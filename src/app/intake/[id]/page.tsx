@@ -9,6 +9,7 @@ import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
 import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
+import { isSapEnabled } from '@/lib/connector';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,9 +85,9 @@ export default async function IntakePage({ params }: { params: { id: string } })
         title={`Spot Analysis ${r.reportNo} — ${r.material.name}`}
         subtitle={<>Date {adIso(r.dateAd)} · Miti {formatMiti(r.dateBs)} · blank result = not tested (that&apos;s fine)</>}
       />
-      <IntakeForm initial={initial} mills={mills} suppliers={suppliers} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} />
+      <IntakeForm initial={initial} mills={mills} suppliers={suppliers} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} sapEnabled={await isSapEnabled()} />
       <div className="mt-5">
-        <SignoffPanel type="intake" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('intake', r.approvalStage, user.role)} />
+        <SignoffPanel type="intake" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('intake', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
       </div>
     </Shell>
   );

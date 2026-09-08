@@ -10,7 +10,8 @@ import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
 import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
-import { parsePacked } from '@/lib/calc';
+import { parsePacked, kgToUnits } from '@/lib/calc';
+import { isSapEnabled } from '@/lib/connector';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +30,7 @@ export default async function ProductionPage({ params }: { params: { id: string 
   if (!r) notFound();
 
   const [packSizes, intakes, slots, me] = await Promise.all([
-    prisma.packSize.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true } }),
+    prisma.packSize.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true, grams: true } }),
     prisma.intakeReport.findMany({
       where: { OR: [{ millId: r.millId }, { millId: null }] },
       orderBy: { dateAd: 'desc' },
@@ -41,6 +42,10 @@ export default async function ProductionPage({ params }: { params: { id: string 
   ]);
 
   const extras = r.processExtras ? JSON.parse(r.processExtras) : {};
+  // the saved breakdown is an override only if it differs from the downtime log's own sum
+  const downtimeSum = r.downtime.reduce((a, d) => a + (d.durationMin ?? 0), 0);
+  const breakdownOverridden = r.breakdownMin != null && Math.round(r.breakdownMin) !== Math.round(downtimeSum);
+
   const initial: ProductionFormData = {
     id: r.id,
     status: r.status,
@@ -61,7 +66,7 @@ export default async function ProductionPage({ params }: { params: { id: string 
       startTime: r.startTime ?? '',
       closeTime: r.closeTime ?? '',
       breakdownMin: r.breakdownMin?.toString() ?? '',
-      breakdownOverridden: false,
+      breakdownOverridden,
       cumulativeMT: r.cumulativeMT?.toString() ?? '',
       electricityKwh: r.electricityKwh?.toString() ?? '',
       voltage: r.voltage?.toString() ?? '',
@@ -83,7 +88,8 @@ export default async function ProductionPage({ params }: { params: { id: string 
       productName: row.product.name,
       kind: row.product.kind,
       semiFinishedKg: row.semiFinishedKg,
-      packedKg: parsePacked(row.packedKg),
+      // rows saved before bag counts existed only have kg — derive the counts from the pack size
+      packedUnits: row.packedUnits ? parsePacked(row.packedUnits) : kgToUnits(parsePacked(row.packedKg), packSizes),
     })),
     downtime: r.downtime.map((d) => ({
       fromTime: d.fromTime ?? '',
@@ -108,9 +114,10 @@ export default async function ProductionPage({ params }: { params: { id: string 
         intakeOptions={intakes.map((i) => ({ id: i.id, label: `${i.reportNo} — ${i.material.name}${i.supplier ? ' · ' + i.supplier.name : ''} (${i.weightKg?.toLocaleString('en-IN') ?? '?'} kg)` }))}
         canApprove={canApprove(user.role)}
         canUnlock={canUnlock(user.role)}
+        sapEnabled={await isSapEnabled()}
       />
       <div className="mt-5">
-        <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} />
+        <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
       </div>
     </Shell>
   );

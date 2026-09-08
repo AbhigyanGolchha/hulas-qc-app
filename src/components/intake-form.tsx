@@ -56,12 +56,14 @@ export function IntakeForm({
   suppliers,
   canApprove,
   canUnlock,
+  sapEnabled = false,
 }: {
   initial: IntakeFormData;
   mills: { id: string; name: string }[];
   suppliers: { id: string; name: string }[];
   canApprove: boolean;
   canUnlock: boolean;
+  sapEnabled?: boolean;
 }) {
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
@@ -103,7 +105,7 @@ export function IntakeForm({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <WorkflowBar type="intake" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} />
+        <WorkflowBar type="intake" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
         <SaveIndicator state={saveState} />
       </div>
 
