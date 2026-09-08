@@ -1,16 +1,28 @@
 /* eslint-disable no-console */
 // Seed: all master data (mills, materials, products, parameters, versioned
-// specs, users, suppliers, pack sizes) + demo batch RFM-193 populated from the
-// real scanned forms, and one small demo batch per other mill.
+// specs, suppliers, pack sizes) + ONE admin account. That is what a real
+// install gets — no demo reports, no demo logins.
+//
+//   npm run setup                      master data + admin (temp password printed)
+//   ADMIN_PASSWORD=… npm run setup     choose the admin password yourself
+//   SEED_DEMO=1 npm run setup          also the demo users (password hulas123) and
+//                                      demo batch RFM-193 from the real scanned forms
 import { PrismaClient } from '@prisma/client';
 import { scryptSync, randomBytes } from 'crypto';
 import NepaliDate from 'nepali-date-converter';
 
 const prisma = new PrismaClient();
+const DEMO = process.env.SEED_DEMO === '1';
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
   return `${salt}:${scryptSync(password, salt, 32).toString('hex')}`;
+}
+
+function tempPassword(): string {
+  const words = ['mango', 'river', 'wheat', 'atta', 'chiura', 'nepal', 'maida', 'suji', 'bhuja', 'kosi', 'terai', 'himal'];
+  const pick = () => words[randomBytes(1)[0] % words.length];
+  return `${pick()}-${1000 + (randomBytes(2).readUInt16BE(0) % 9000)}-${pick()}`;
 }
 
 function adToBs(adIso: string): string {
@@ -344,18 +356,35 @@ async function main() {
   ]);
 
   // ---------- Users ----------
+  // Real install: one admin with a temporary password, forced to change it on
+  // first sign-in. Everyone else is created in Admin → Users.
+  const adminPassword = process.env.ADMIN_PASSWORD || (DEMO ? 'hulas123' : tempPassword());
+  const adminU = await prisma.user.create({
+    data: { username: 'admin', name: 'Admin', role: 'ADMIN', passwordHash: hashPassword(adminPassword), mustChangePassword: !DEMO, email: process.env.ADMIN_EMAIL || null },
+  });
+  await prisma.auditLog.create({
+    data: { userName: 'seed', recordType: 'MASTER', recordId: 'seed', action: 'CREATE', newValue: DEMO ? 'Master data + demo batches seeded' : 'Master data seeded (clean install, no demo data)' },
+  });
+  if (!DEMO) {
+    console.log('Seed complete — master data only, no demo records.');
+    console.log(`Admin login: admin / ${adminPassword}   (you will be asked to choose a new password on first sign-in)`);
+    return;
+  }
+
   const pw = hashPassword('hulas123');
-  const users = await Promise.all([
-    prisma.user.create({ data: { username: 'admin', name: 'Admin', role: 'ADMIN', passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'poonam', name: 'Poonam Gupta', role: 'QC', passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'gm', name: 'General Manager', role: 'MANAGER', passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'godown', name: 'Godown Keeper', role: 'GODOWN', passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'sup.rfm', name: 'RFM Supervisor', role: 'SUPERVISOR', millId: rfm.id, passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'sup.cam', name: 'Chakki Supervisor', role: 'SUPERVISOR', millId: cam.id, passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'sup.chm', name: 'Chiura Supervisor', role: 'SUPERVISOR', millId: chm.id, passwordHash: pw } }),
-    prisma.user.create({ data: { username: 'sup.bjm', name: 'Bhuja Supervisor', role: 'SUPERVISOR', millId: bjm.id, passwordHash: pw } }),
-  ]);
-  const [adminU, poonam, gmU] = users;
+  const users = [
+    adminU,
+    ...(await Promise.all([
+      prisma.user.create({ data: { username: 'poonam', name: 'Poonam Gupta', role: 'QC', passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'gm', name: 'General Manager', role: 'MANAGER', passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'godown', name: 'Godown Keeper', role: 'GODOWN', passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'sup.rfm', name: 'RFM Supervisor', role: 'SUPERVISOR', millId: rfm.id, passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'sup.cam', name: 'Chakki Supervisor', role: 'SUPERVISOR', millId: cam.id, passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'sup.chm', name: 'Chiura Supervisor', role: 'SUPERVISOR', millId: chm.id, passwordHash: pw } }),
+      prisma.user.create({ data: { username: 'sup.bjm', name: 'Bhuja Supervisor', role: 'SUPERVISOR', millId: bjm.id, passwordHash: pw } }),
+    ])),
+  ];
+  const [, poonam, gmU] = users;
 
   // ---------- Demo batch RFM-193 (from the real forms) ----------
   const AD = '2026-04-16';
@@ -449,7 +478,7 @@ async function main() {
   const rfmProducts = await prisma.product.findMany({ where: { millId: rfm.id }, orderBy: { sortOrder: 'asc' } });
   const byName = Object.fromEntries(rfmProducts.map((p) => [p.name, p]));
   const outRows: Array<[string, number, Record<string, number>]> = [
-    // [product, semiFinishedKg, packed by size] — totals match the paper form kg
+    // [product, semiFinishedKg (loose, unpacked), packed kg by size] — totals match the paper form kg
     ['Maida', 2580, { [packs['50 kg bora']]: 15000, [packs['20 kg bora']]: 4000, [packs['5 kg']]: 1000 }],
     ['Mill Atta', 250, { [packs['10 kg']]: 2000, [packs['5 kg']]: 1500, [packs['1 kg']]: 500 }],
     ['Suji', 190, { [packs['1 kg']]: 1000, [packs['400 g']]: 1000 }],
@@ -457,10 +486,13 @@ async function main() {
     ['Broken + usable dust + stem', 800, {}],
     ['Dust', 600, {}],
   ];
+  const gramsOf = Object.fromEntries(packDefs.map(([label, g]) => [packs[label], g]));
   let sort = 1;
   for (const [name, semi, packed] of outRows) {
+    // the form now takes bag/packet counts; kg stays as the derived column
+    const units = Object.fromEntries(Object.entries(packed).map(([pid, kg]) => [pid, Math.round((kg * 1000) / gramsOf[pid])]));
     await prisma.productionRow.create({
-      data: { reportId: prod.id, productId: byName[name].id, semiFinishedKg: semi, packedKg: JSON.stringify(packed), sortOrder: sort++ },
+      data: { reportId: prod.id, productId: byName[name].id, semiFinishedKg: semi, packedUnits: JSON.stringify(units), packedKg: JSON.stringify(packed), sortOrder: sort++ },
     });
   }
   await prisma.downtimeEntry.create({
@@ -630,16 +662,12 @@ async function main() {
     await prisma.setting.upsert({ where: { key: k }, create: { key: k, value: v }, update: { value: v } });
   }
 
-  await prisma.auditLog.create({
-    data: { userName: 'seed', recordType: 'MASTER', recordId: 'seed', action: 'CREATE', newValue: 'Initial master data + demo batches seeded' },
-  });
-
   // digital sign-offs: starter signatures for users + rows on non-draft demo records
   const { seedDemoSignatures } = await import('./demo-signatures');
   await seedDemoSignatures(prisma);
 
-  console.log('Seed complete. Login: admin / poonam / gm / godown / sup.rfm … password: hulas123');
-  void adminU; void gmU;
+  console.log('Demo seed complete. Login: admin / poonam / gm / godown / sup.rfm … password: hulas123');
+  void gmU;
 }
 
 main()

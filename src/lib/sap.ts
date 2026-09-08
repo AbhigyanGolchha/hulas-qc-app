@@ -135,6 +135,7 @@ export async function buildProductionPayload(id: string) {
   });
   const packSizes = await prisma.packSize.findMany();
   const packLabel = Object.fromEntries(packSizes.map((p) => [p.id, p.label]));
+  const packGrams = Object.fromEntries(packSizes.map((p) => [p.id, p.grams]));
   return {
     record_type: 'SAP_PROD_ORDER_CONFIRMATION',
     record_id: r.id,
@@ -166,7 +167,10 @@ export async function buildProductionPayload(id: string) {
     goods_received: r.rows.map((row) => ({
       material: { code: row.product.sapMaterialCode, name: row.product.name, kind: row.product.kind },
       semi_finished_kg: row.semiFinishedKg,
-      packed: Object.entries(row.packedKg ? (JSON.parse(row.packedKg) as Record<string, number>) : {}).map(([pid, kg]) => ({ pack_size: packLabel[pid] ?? pid, kg })),
+      packed: Object.entries(row.packedKg ? (JSON.parse(row.packedKg) as Record<string, number>) : {}).map(([pid, kg]) => {
+        const units = row.packedUnits ? (JSON.parse(row.packedUnits) as Record<string, number>)[pid] ?? null : packGrams[pid] ? Math.round((kg * 1000) / packGrams[pid]) : null;
+        return { pack_size: packLabel[pid] ?? pid, pack_grams: packGrams[pid] ?? null, units, kg };
+      }),
     })),
     downtime: r.downtime.map((d) => ({ from: d.fromTime, to: d.toTime, minutes: d.durationMin, department: d.department, root_cause: d.rootCause })),
     status: r.status,
@@ -174,7 +178,12 @@ export async function buildProductionPayload(id: string) {
   };
 }
 
+// Called on final approval. With SAP posting switched off (the default) this
+// is a no-op: nothing is queued, nothing is sent. The payload builders above
+// still serve the "Export JSON" download when the integration is on.
 export async function exportToOutbox(type: 'INTAKE' | 'QC' | 'PRODUCTION', id: string) {
+  const { isSapEnabled } = await import('./connector');
+  if (!(await isSapEnabled())) return null;
   const payload =
     type === 'INTAKE' ? await buildIntakePayload(id) : type === 'QC' ? await buildQcPayload(id) : await buildProductionPayload(id);
   const row = await prisma.integrationOutbox.create({

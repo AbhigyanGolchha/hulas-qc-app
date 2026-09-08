@@ -6,8 +6,12 @@ import { ROLE_LABELS, type Role } from '@/lib/constants';
 
 async function logout() {
   'use server';
+  const { getSessionUser } = await import('@/lib/auth');
+  const { prisma } = await import('@/lib/db');
+  const u = await getSessionUser();
+  if (u) await prisma.auditLog.create({ data: { userId: u.id, userName: u.name, recordType: 'AUTH', recordId: u.id, action: 'LOGOUT' } });
   clearSessionCookie();
-  redirect('/login');
+  redirect('/login?out=1');
 }
 
 const NAV = [

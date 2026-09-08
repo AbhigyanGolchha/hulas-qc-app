@@ -8,8 +8,12 @@
     "start": "next start",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed:demo": "SEED_DEMO=1 tsx prisma/seed.ts",
+    "db:reset": "tsx scripts/reset-transactions.ts",
     "setup": "prisma db push && tsx prisma/seed.ts",
+    "setup:demo": "prisma db push && SEED_DEMO=1 tsx prisma/seed.ts",
     "sap:worker": "tsx scripts/sap-worker.ts",
+    "mail:worker": "tsx scripts/mail-worker.ts",
     "b1:provision": "tsx scripts/b1-provision.ts",
     "b1:test": "node scripts/fake-b1-server.mjs & sleep 1 && tsx scripts/test-b1.ts; kill %1 2>/dev/null"
   },
@@ -20,11 +24,13 @@
     "@prisma/client": "^5.22.0",
     "nepali-date-converter": "^3.3.4",
     "next": "^14.2.15",
+    "nodemailer": "^6.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.4.20",

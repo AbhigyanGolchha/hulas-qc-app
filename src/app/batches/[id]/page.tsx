@@ -8,6 +8,7 @@ import { PageTitle, Card, StatusBadge, PassFailBadge, DualDate } from '@/compone
 import { adIso, addDays, adToBs, formatMiti, formatAdLong } from '@/lib/dates';
 import { fmtKg, parsePacked, rowTotalKg } from '@/lib/calc';
 import { DECISIONS, type Decision } from '@/lib/constants';
+import { isSapEnabled } from '@/lib/connector';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,16 +152,18 @@ export default async function BatchPage({ params }: { params: { id: string } }) 
         </Card>
       </div>
 
-      <Card title="SAP reference" className="mt-4">
-        <form action={saveSapOrderNo} className="flex flex-wrap items-end gap-2 text-sm">
-          <input type="hidden" name="batchId" value={b.id} />
-          <label>SAP production order no. (for confirmations)<br />
-            <input name="sapOrderNo" defaultValue={b.sapOrderNo ?? ''} className="field w-56" placeholder="e.g. 1000123" />
-          </label>
-          <button className="btn-secondary">Save</button>
-          <span className="text-xs text-stone-400">Optional until SAP go-live — production reports for this batch confirm against this order.</span>
-        </form>
-      </Card>
+      {(await isSapEnabled()) && (
+        <Card title="SAP reference" className="mt-4">
+          <form action={saveSapOrderNo} className="flex flex-wrap items-end gap-2 text-sm">
+            <input type="hidden" name="batchId" value={b.id} />
+            <label>SAP production order no. (for confirmations)<br />
+              <input name="sapOrderNo" defaultValue={b.sapOrderNo ?? ''} className="field w-56" placeholder="e.g. 1000123" />
+            </label>
+            <button className="btn-secondary">Save</button>
+            <span className="text-xs text-stone-400">Production reports for this batch confirm against this order (documents mode only).</span>
+          </form>
+        </Card>
+      )}
 
       <Card title="Retention sample register (optional)" className="mt-4">
         {b.retentionSamples.length > 0 && (

@@ -15,18 +15,28 @@ master data, UUID keys, structured specs, `/api/export` + `integration_outbox` q
 
 ```bash
 npm install
-npm run setup   # prisma db push + seed (SQLite, demo data included)
+npm run setup   # prisma db push + seed master data + ONE admin account (temp password printed)
 npm run dev     # http://localhost:3000
 ```
 
-**Demo logins** (password `hulas123`): `admin`, `gm` (Manager), `poonam` (QC analyst),
-`godown`, `sup.rfm` / `sup.cam` / `sup.chm` / `sup.bjm` (per-mill supervisors).
+Sign in as `admin` with the printed temporary password — you are asked to choose your own
+on first sign-in. Then create everyone else in **Admin → Users** (each gets a one-time
+temporary password, emailed if they have an address). Set `ADMIN_PASSWORD=…` before
+`npm run setup` to pick the admin password yourself.
 
-Seeded demo: batch **RFM-193** (16-Apr-2026 / Miti 3-1-2083) fully populated from the real
-scanned forms — wheat intake SA-2083-0001, production DP-2083-0001 (38,542 kg net input,
-75.29% main yield, 93.75% efficiency), QC sheets for Maida/Mill Atta/Suji — plus small demo
-batches for the Chakki (CAM-87, submitted → try approving), Chiura (CHM-41) and Bhuja
-(BJM-28, draft → try editing) mills.
+**Demo data is opt-in**: `npm run setup:demo` (or `SEED_DEMO=1 npm run db:seed`) also creates
+the demo logins (`gm`, `poonam`, `godown`, `sup.rfm` … password `hulas123`) and batch
+**RFM-193** (16-Apr-2026 / Miti 3-1-2083) populated from the real scanned forms — wheat
+intake, production DP-2083-0001 (38,542 kg net input, 75.29% main yield), QC sheets for
+Maida/Mill Atta/Suji — plus small demo batches for the other mills.
+
+**Start real testing from zero**: `npm run db:reset` wipes every report, batch, signature,
+SAP/mail queue row, audit row and non-admin user, but keeps master data, suppliers (including
+the ones pulled from SAP), mill batch counters, approval flow and all settings (SAP, email).
+
+Set a long random `SESSION_SECRET` in `.env` (already generated for this machine).
+Timezone: the whole process is pinned to **Asia/Kathmandu (GMT+5:45)** in `next.config.mjs`;
+every timestamp on screen, in prints and in emails shows Nepal time ("NPT").
 
 ## How it works
 
@@ -44,26 +54,70 @@ batches for the Chakki (CAM-87, submitted → try approving), Chiura (CHM-41) an
   Report numbering uses the BS year (SA-2083-0001); batch numbers per mill (RFM-193 → RFM-194).
 - **3-sample averaging**: moisture rows take 3 samples + an IR instrument reading; Result
   Obtained auto-averages, typing a result manually overrides (flagged).
+- **Production maths** (Section C): pack columns take the **number of bags/packets**; the app
+  converts to kg from the pack size (350 × 50 kg bora = 17,500 kg, shown under the cell).
+  **Semi-finished** is product still loose in bins (not packed yet) — never the packed
+  weight again. Row total = semi-finished + packed kg. Total recovery = all output ÷ net
+  input; main-product yield excludes by-products. Net input = kanta − bora per line (a
+  bora heavier than its kanta blocks submit). Breakdown minutes = Σ downtime log unless the
+  supervisor ticks *edit* and overrides (the override now survives reloads). Efficiency =
+  (shift − breakdown) ÷ shift, clamped at 0.
 - **Yield warnings**: per-mill sanity bands (admin-editable) — e.g. Roller total recovery
-  98–103%, Chiura main yield 60–70%. Soft warnings only, never blocking.
+  98–103%, Chiura main yield 60–70%. Soft warnings only, never blocking; submitting outside
+  the band also emails the managers (event *Production yield outside the expected band*).
 - **Autosave**: forms save ~1.2 s after you stop typing; safe to walk away mid-entry.
 - **Digital sign-offs (no paper signatures)**: each user draws their signature once on
   `/profile` (mouse/finger/stylus — works on the gate tablet). Submitting a report signs the
   submitter's slot automatically, Approve signs the manager slot, and co-signers (godown
   keeper on intake) sign with one tap on the record's *Digital sign-offs* panel. Every
   signature stores a point-in-time image snapshot + name + timestamp, writes an audit row,
-  and *unlocking voids all signatures* — after edits, everyone signs again. Demo users get
-  seeded cursive signatures; real users replace them on first sign.
+  and *unlocking voids all signatures* — after edits, everyone signs again. While a report is
+  still editable a signer can **remove their own signature** (Manager/Admin: anyone's) from the
+  sign-off panel and sign again — audited as UNSIGN. Approval signatures are only undone by
+  Reject/Unlock. On `/profile` a signature can be replaced or removed at any time.
 - **Printing**: every report has a paper-style print view (`/print/<type>/<id>`) — use the
   browser's Print → Save as PDF. Prints show the digital signature images with
   "Digitally signed <time> NPT" — nothing left to sign by hand.
 - **Exports**: CSV of any filtered list (`Export CSV` on list pages); SAP-shaped JSON per
-  record (`Export JSON`), also queued in Admin → Integration outbox.
+  record (`Export JSON`), also queued in Admin → Integration outbox. The **Weekly Production
+  Report** exports as CSV (`/api/csv?type=weekly&start=…`) and as PDF via its print view
+  (`/print/weekly?start=…`).
+- **Login system**: accounts exist only via Admin → Users (no self-signup, no demo logins on
+  the login page). New accounts and admin resets get a one-time temporary password and must
+  choose their own (≥ 8 chars, letters + a number) before doing anything else. 5 wrong
+  passwords lock the account for 15 minutes (Admin can unlock). Every sign-in, failure,
+  sign-out, password change and reset is in the audit log under *Sign-ins & passwords*.
+  Users can be deactivated (kept for the audit trail) and reactivated.
+- **Email notifications** (Admin → Notifications): every module raises events —
+  *submitted* (to the role that must approve the current step), *approval step done*,
+  *fully approved* / *rejected* / *unlocked* (to the preparer + signers), *QC FAIL*,
+  *lot rejected / deduction at the gate*, *yield outside band*, *SAP delivery failed*,
+  plus account invites/resets. Admin picks which roles (and extra addresses) get each
+  event; supervisors only hear about their own mill; nobody is emailed about their own
+  action; each user can mute events on `/profile`. Delivery is SMTP (`nodemailer`) — works
+  with Microsoft 365 / Google Workspace app passwords; `SMTP_PASSWORD` env var wins over
+  the stored one. Every email is queued in the Notification table first: with email switched
+  off rows show as SKIPPED (so you can see what would go out), failures retry 5× then park
+  as FAILED with a Retry button; `npm run mail:worker` retries in the background.
 
-## SAP Business One integration
+## SAP Business One integration — switched OFF by default
+
+**Decision 2026-09-08:** posting QC/production records into B1 brings no benefit
+yet, so the integration is off. Approvals are not queued or sent anywhere; the
+SAP cards, the *Export JSON (SAP)* button and the batch "SAP order no." field
+are hidden. What still works and is useful: **Pull suppliers from SAP** (Admin →
+SAP Business One) so the intake supplier list matches B1's vendor master.
+
+To turn posting back on: Admin → SAP Business One → tick *Post approved reports
+to SAP* → Save. Everything below then applies unchanged (the connector code,
+provisioned `HULAS_QC` UDO and worker are kept dormant, not deleted). The one
+integration that would genuinely save work later is **documents mode** —
+posting each approved daily production report as Issue + Receipt for
+Production, so inventory in B1 moves without re-typing. That needs item codes
+on products and a production order per batch first.
 
 Hulas Group runs **SAP B1**, and the connector (`src/lib/connector.ts`) is built
-for its Service Layer. Every approval queues a document in `integration_outbox`;
+for its Service Layer. When posting is on, every approval queues a document in `integration_outbox`;
 delivery happens on approval (auto-send toggle), via **Sync now**, or through the
 polling worker `npm run sap:worker`. Rows retry up to 5 times then park as
 FAILED with the error and a per-row Retry button; B1 document numbers are
@@ -112,16 +166,21 @@ Next.js 14 (App Router) + TypeScript + Tailwind + Prisma/SQLite (switch `datasou
 
 ```
 prisma/schema.prisma      data model (SQLite: enums→String, JSON→String columns)
-prisma/seed.ts            all master data + demo batches (idempotent per fresh db)
-src/lib/                  spec engine, BS↔AD dates, calc, auth, audit, numbering, SAP payloads
-src/app/api/records/...   autosave PATCH + workflow POST (submit/approve/reject/unlock)
-src/app/{intake,qc,production,batches,admin,print}/
-src/components/           the three big client forms, charts, shell
+prisma/seed.ts            master data + admin; demo batches only with SEED_DEMO=1
+scripts/reset-transactions.ts   npm run db:reset — wipe reports/users, keep master data + settings
+src/lib/                  spec engine, BS↔AD dates (+ fmtNpt), calc, auth (lockout), audit,
+                          numbering, workflow (submit/approve/reject/unlock), sign (+unsign),
+                          notify (events → recipients → templates), mail (SMTP queue), weekly
+src/app/api/records/...   autosave PATCH + workflow POST (submit/approve/reject/unlock/sign/unsign/delete)
+src/app/{intake,qc,production,batches,reports,admin,profile,print}/
+src/components/           the three big client forms, charts, shell, sign-off panel
 ```
 
 ## Notes
 
-- Timezone is Asia/Kathmandu for "today"; dates are stored as calendar dates.
-- To reset demo data: `rm prisma/dev.db && npm run setup`.
+- Timezone is Asia/Kathmandu (GMT+5:45) for everything — `next.config.mjs` sets `process.env.TZ`;
+  the workers set it too. Calendar dates are stored as local midnight.
+- To reset to demo data: `rm prisma/dev.db && npm run setup:demo`. To wipe real test data but
+  keep master data and settings: `npm run db:reset`.
 - Server-side PDF (Playwright print) can be added later; the print views are already
   paper-shaped so it's a drop-in.

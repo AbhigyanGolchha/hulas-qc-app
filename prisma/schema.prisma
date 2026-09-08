@@ -95,15 +95,46 @@ model User {
   id           String  @id @default(uuid())
   username     String  @unique
   name         String
+  email        String? // where notifications go; blank = no email for this user
   passwordHash String
   role         String // ADMIN | MANAGER | QC | SUPERVISOR | GODOWN
   millId       String? // supervisors are per-mill
   mill         Mill?   @relation(fields: [millId], references: [id])
   active       Boolean @default(true)
   signatureData String? // drawn signature (PNG data URI) — set once on /profile
+  // login hardening
+  mustChangePassword Boolean   @default(false) // set on create / admin reset — forced to /profile/password
+  failedLogins       Int       @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  notifyPrefs        String? // JSON { [event]: false } — events the user has muted (default: all on)
 
-  auditLogs  AuditLog[]
-  signatures Signature[]
+  auditLogs     AuditLog[]
+  signatures    Signature[]
+  notifications Notification[]
+}
+
+// Outgoing email queue. Every event that should reach someone lands here first,
+// then the mailer delivers (immediately when SMTP is configured, otherwise via
+// "Send pending" in Admin → Notifications or the mail worker). Nothing is lost
+// if SMTP is down — rows retry and park as FAILED with the error.
+model Notification {
+  id          String    @id @default(uuid())
+  event       String // SUBMITTED | APPROVED | REJECTED | UNLOCKED | STAGE_APPROVED | QC_FAILED | INTAKE_REJECTED | SAP_FAILED | USER_INVITE | PASSWORD_RESET | TEST
+  recordType  String? // INTAKE | QC | PRODUCTION | null
+  recordId    String?
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  toEmail     String
+  toName      String?
+  subject     String
+  bodyText    String
+  bodyHtml    String?
+  status      String    @default("PENDING") // PENDING | SENT | FAILED | SKIPPED
+  attempts    Int       @default(0)
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
 }
 
 // Digital sign-off: one row per signature slot per record. The image is a
@@ -389,8 +420,9 @@ model ProductionRow {
   report         ProductionReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
   productId      String
   product        Product @relation(fields: [productId], references: [id])
-  semiFinishedKg Float?
-  packedKg       String? // JSON: { [packSizeId]: kg }
+  semiFinishedKg Float? // loose / unpacked product (kg) — NOT the packed weight again
+  packedUnits    String? // JSON: { [packSizeId]: number of bags/packets } — what the floor counts
+  packedKg       String? // JSON: { [packSizeId]: kg } — derived (units × pack grams), kept for reports & SAP
   sortOrder      Int     @default(0)
 }
 

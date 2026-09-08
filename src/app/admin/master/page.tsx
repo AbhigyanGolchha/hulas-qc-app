@@ -1,10 +1,10 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { requireUser, hashPassword } from '@/lib/auth';
+import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
-import { ROLES, ROLE_LABELS } from '@/lib/constants';
 import { logAudit } from '@/lib/audit';
 
 export const dynamic = 'force-dynamic';
@@ -65,21 +65,6 @@ async function updateMill(formData: FormData) {
   revalidatePath('/admin/master');
 }
 
-async function addUser(formData: FormData) {
-  'use server';
-  const user = await guard();
-  if (user.role !== 'ADMIN') return;
-  const username = String(formData.get('username') || '').trim().toLowerCase();
-  const name = String(formData.get('name') || '').trim();
-  const role = String(formData.get('role') || 'QC');
-  const millId = String(formData.get('millId') || '') || null;
-  const password = String(formData.get('password') || '');
-  if (!username || !name || password.length < 6) return;
-  await prisma.user.create({ data: { username, name, role, millId, passwordHash: hashPassword(password) } });
-  await logAudit(user, 'MASTER', username, 'CREATE', 'user', null, `${name} (${role})`);
-  revalidatePath('/admin/master');
-}
-
 async function addPackSize(formData: FormData) {
   'use server';
   const user = await guard();
@@ -94,17 +79,16 @@ async function addPackSize(formData: FormData) {
 
 export default async function MasterAdmin() {
   const user = await guard();
-  const [mills, products, suppliers, packSizes, users] = await Promise.all([
+  const [mills, products, suppliers, packSizes] = await Promise.all([
     prisma.mill.findMany({ orderBy: { sortOrder: 'asc' } }),
     prisma.product.findMany({ where: { active: true }, orderBy: [{ mill: { sortOrder: 'asc' } }, { sortOrder: 'asc' }], include: { mill: true } }),
     prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
     prisma.packSize.findMany({ orderBy: { sortOrder: 'asc' } }),
-    prisma.user.findMany({ orderBy: { name: 'asc' }, include: { mill: true } }),
   ]);
 
   return (
     <Shell user={user} active="/admin">
-      <PageTitle title="Master data" subtitle="SAP codes are optional and stay blank until integration day — the schema is ready." />
+      <PageTitle title="Master data" subtitle="SAP codes are optional and stay blank until integration day — the schema is ready. User accounts moved to Admin → Users."><Link className="btn-secondary" href="/admin/users">Users &amp; sign-in →</Link></PageTitle>
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Mills — yield sanity thresholds (%)">
           <div className="space-y-3">
@@ -167,35 +151,6 @@ export default async function MasterAdmin() {
           </form>
         </Card>
 
-        <Card title="Users" className="xl:col-span-2">
-          <table className="mb-4 w-full text-sm">
-            <thead className="text-left text-xs uppercase text-stone-500">
-              <tr><th className="py-1">Name</th><th className="py-1">Username</th><th className="py-1">Role</th><th className="py-1">Mill</th></tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-t border-stone-100">
-                  <td className="py-1.5">{u.name}</td>
-                  <td className="py-1.5"><code>{u.username}</code></td>
-                  <td className="py-1.5">{ROLE_LABELS[u.role as keyof typeof ROLE_LABELS] ?? u.role}</td>
-                  <td className="py-1.5">{u.mill?.name ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {user.role === 'ADMIN' ? (
-            <form action={addUser} className="flex flex-wrap items-end gap-2 text-sm">
-              <label>Full name<br /><input name="name" className="field w-44" /></label>
-              <label>Username<br /><input name="username" className="field w-32" /></label>
-              <label>Role<br /><select name="role" className="field w-40">{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</select></label>
-              <label>Mill (supervisors)<br /><select name="millId" className="field w-40"><option value="">—</option>{mills.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-              <label>Password (min 6)<br /><input name="password" type="password" className="field w-36" /></label>
-              <button className="btn-secondary">Add user</button>
-            </form>
-          ) : (
-            <p className="text-xs text-stone-400">Only Admin can add users.</p>
-          )}
-        </Card>
       </div>
     </Shell>
   );

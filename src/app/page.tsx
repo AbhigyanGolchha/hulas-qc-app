@@ -6,27 +6,25 @@ import { Shell } from '@/components/shell';
 import { Card, PassFailBadge, DualDate } from '@/components/ui';
 import { LineChart, ParetoBars, StatTile } from '@/components/charts';
 import { canApprove } from '@/lib/constants';
-import { logAudit } from '@/lib/audit';
-import { exportToOutbox } from '@/lib/sap';
 import { adIso, todayKathmandu, addDays } from '@/lib/dates';
 import { parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from '@/lib/calc';
+import { approveRecord, WorkflowError } from '@/lib/workflow';
+import { canApproveNow } from '@/lib/approval';
 
 export const dynamic = 'force-dynamic';
 
+// Same code path as the Approve button on the record page: signs the current
+// approval stage, advances multi-step chains, exports to SAP only when final.
 async function quickApprove(formData: FormData) {
   'use server';
   const user = await requireUser();
-  if (!canApprove(user.role)) return;
   const type = String(formData.get('type')) as 'intake' | 'qc' | 'production';
   const id = String(formData.get('id'));
-  const model = type === 'intake' ? prisma.intakeReport : type === 'qc' ? prisma.qcReport : prisma.productionReport;
-  // @ts-expect-error dynamic model union
-  const rec = await model.findUnique({ where: { id } });
-  if (!rec || rec.status !== 'SUBMITTED') return;
-  // @ts-expect-error dynamic model union
-  await model.update({ where: { id }, data: { status: 'APPROVED', approvedBy: user.name, approvedAt: new Date() } });
-  await logAudit(user, type.toUpperCase(), id, 'APPROVE');
-  await exportToOutbox(type === 'intake' ? 'INTAKE' : type === 'qc' ? 'QC' : 'PRODUCTION', id);
+  try {
+    await approveRecord(user, type, id);
+  } catch (e) {
+    if (!(e instanceof WorkflowError)) throw e;
+  }
   revalidatePath('/');
 }
 
@@ -44,9 +42,14 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
     prisma.intakeReport.findMany({ where: { status: 'SUBMITTED' }, include: { material: true, supplier: true }, orderBy: { updatedAt: 'desc' }, take: 20 }),
     prisma.qcReport.findMany({ where: { status: 'SUBMITTED' }, include: { product: true, batch: { include: { mill: true } } }, orderBy: { updatedAt: 'desc' }, take: 20 }),
     prisma.productionReport.findMany({ where: { status: 'SUBMITTED' }, include: { mill: true, batch: true }, orderBy: { updatedAt: 'desc' }, take: 20 }),
-    prisma.qcReport.findMany({ where: { dateAd: { gte: weekStart }, overallResult: { not: null } } }),
+    prisma.qcReport.findMany({ where: { dateAd: { gte: weekStart }, overallResult: { not: null }, status: { in: ['SUBMITTED', 'APPROVED'] } } }),
     prisma.batch.count({ where: { createdAt: { gte: weekStart } } }),
   ]);
+  // which pending items THIS user may approve right now (multi-step chains route stages to roles)
+  const approvable = new Set<string>();
+  for (const r of pendingIntake) if (await canApproveNow('intake', r.approvalStage, user.role)) approvable.add(r.id);
+  for (const r of pendingQc) if (await canApproveNow('qc', r.approvalStage, user.role)) approvable.add(r.id);
+  for (const r of pendingProd) if (await canApproveNow('production', r.approvalStage, user.role)) approvable.add(r.id);
 
   const pendingCount = pendingIntake.length + pendingQc.length + pendingProd.length;
   const passWeek = qcWeek.filter((q) => q.overallResult === 'PASS').length;
@@ -77,9 +80,9 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
     specMax = spec?.max ?? null;
   }
 
-  // ---- yield & efficiency trend ----
+  // ---- yield & efficiency trend (submitted + approved reports only; drafts are still being typed) ----
   const prodReports = await prisma.productionReport.findMany({
-    where: { dateAd: range, ...(millFilter ? { millId: millFilter } : {}) },
+    where: { dateAd: range, status: { in: ['SUBMITTED', 'APPROVED'] }, ...(millFilter ? { millId: millFilter } : {}) },
     include: { inputs: true, rows: { include: { product: true } }, downtime: true },
     orderBy: { dateAd: 'asc' },
     take: 60,
@@ -104,9 +107,11 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
     where: { report: { dateAd: range, ...(millFilter ? { millId: millFilter } : {}) } },
   });
   const paretoMap = new Map<string, number>();
+  let downtimeTotal = 0;
   for (const d of downtime) {
     const key = d.department || d.rootCause || 'Unspecified';
     paretoMap.set(key, (paretoMap.get(key) ?? 0) + (d.durationMin ?? 0));
+    downtimeTotal += d.durationMin ?? 0;
   }
   const pareto = [...paretoMap.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8);
 
@@ -153,7 +158,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
         <StatTile label="Waiting for approval" value={String(pendingCount)} tone={pendingCount ? 'warn' : 'good'} hint={pendingCount ? 'act below' : 'all clear'} />
         <StatTile label="QC pass rate (7 days)" value={passRate !== null ? `${passRate}%` : '—'} tone={passRate !== null && passRate < 90 ? 'warn' : 'good'} hint={`${passWeek}/${qcWeek.length} sheets passed`} />
         <StatTile label="Batches this week" value={String(batchesWeek)} />
-        <StatTile label="Downtime in range" value={`${Math.round(pareto.reduce((a, p) => a + p.value, 0))} min`} />
+        <StatTile label="Downtime in range" value={`${Math.round(downtimeTotal)} min`} hint={downtimeTotal >= 60 ? `${Math.floor(downtimeTotal / 60)} hr ${Math.round(downtimeTotal % 60)} min` : undefined} />
       </div>
 
       {pendingCount > 0 && (
@@ -165,7 +170,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <Link href={`/intake/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link>
                 <span>{r.material.name} · {r.supplier?.name ?? 'no supplier'}</span>
                 <span className="flex-1" />
-                {isManager && (
+                {approvable.has(r.id) && (
                   <form action={quickApprove}><input type="hidden" name="type" value="intake" /><input type="hidden" name="id" value={r.id} /><button className="btn-primary">Approve</button></form>
                 )}
               </li>
@@ -177,7 +182,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <span>{r.batch.mill.name} · {r.product.name} · {r.batch.batchNo}</span>
                 <PassFailBadge result={r.overallResult} />
                 <span className="flex-1" />
-                {isManager && (
+                {approvable.has(r.id) && (
                   <form action={quickApprove}><input type="hidden" name="type" value="qc" /><input type="hidden" name="id" value={r.id} /><button className="btn-primary">Approve</button></form>
                 )}
               </li>
@@ -188,13 +193,14 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <Link href={`/production/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link>
                 <span>{r.mill.name} · {r.batch.batchNo}</span>
                 <span className="flex-1" />
-                {isManager && (
+                {approvable.has(r.id) && (
                   <form action={quickApprove}><input type="hidden" name="type" value="production" /><input type="hidden" name="id" value={r.id} /><button className="btn-primary">Approve</button></form>
                 )}
               </li>
             ))}
           </ul>
-          {!isManager && <p className="mt-2 text-xs text-stone-400">Only a Manager can approve — this list is read-only for you.</p>}
+          {!isManager && approvable.size === 0 && <p className="mt-2 text-xs text-stone-400">Nothing here is waiting on your role — this list is read-only for you.</p>}
+          {isManager && <p className="mt-2 text-xs text-stone-400">Approve here signs the approval slot exactly like the button on the record page. Open the record to reject with a reason.</p>}
         </Card>
       )}
 

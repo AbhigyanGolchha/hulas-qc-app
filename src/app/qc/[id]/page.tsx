@@ -10,6 +10,7 @@ import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
 import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
+import { isSapEnabled } from '@/lib/connector';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,9 +102,9 @@ export default async function QcPage({ params }: { params: { id: string } }) {
           <Link href={`/qc/new?batch=${r.batchId}`} className="rounded-t px-3 py-1.5 text-stone-400 hover:bg-stone-100">+ add product</Link>
         </div>
       )}
-      <QcForm initial={initial} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} isManager={canApprove(user.role)} />
+      <QcForm initial={initial} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} isManager={canApprove(user.role)} sapEnabled={await isSapEnabled()} />
       <div className="mt-5">
-        <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} />
+        <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
       </div>
     </Shell>
   );

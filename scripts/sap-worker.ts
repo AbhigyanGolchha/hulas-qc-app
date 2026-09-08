@@ -8,6 +8,7 @@
 // Uses the same connector code as the app, straight against the database —
 // no HTTP hop, no auth needed. Safe to run 24/7; rows failing 5 times park
 // as FAILED for a human to look at in Admin → SAP connection.
+process.env.TZ = 'Asia/Kathmandu';
 import { syncPending, getSapConfig } from '../src/lib/connector';
 import { prisma } from '../src/lib/db';
 
@@ -27,6 +28,11 @@ async function tick() {
 
 async function main() {
   const cfg = await getSapConfig();
+  if (!cfg.enabled) {
+    console.log('SAP posting is switched off (Admin → SAP Business One). Nothing to do — exiting.');
+    await prisma.$disconnect();
+    return;
+  }
   console.log(`SAP worker started — profile=${cfg.profile}, interval=${intervalSec}s. Ctrl-C to stop.`);
   await tick();
   setInterval(tick, intervalSec * 1000);

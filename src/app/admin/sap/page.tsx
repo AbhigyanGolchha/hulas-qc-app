@@ -8,6 +8,7 @@ import { logAudit } from '@/lib/audit';
 import { getSapConfig, testConnection, syncPending, deliverRow } from '@/lib/connector';
 import { pullSuppliersFromB1 } from '@/lib/sap-pull';
 import { ActionButton } from '@/components/action-button';
+import { fmtNptShort } from '@/lib/dates';
 
 // Next's redirect() works by throwing — anything else is a real error to show the user
 function isRedirect(e: unknown) {
@@ -36,9 +37,11 @@ async function saveConfig(formData: FormData) {
   }
   const autoSend = formData.get('autoSend') === 'on' ? 'true' : 'false';
   await prisma.setting.upsert({ where: { key: 'sap.autoSend' }, create: { key: 'sap.autoSend', value: autoSend }, update: { value: autoSend } });
+  const enabled = formData.get('enabled') === 'on' ? 'on' : 'off';
+  await prisma.setting.upsert({ where: { key: 'integrations.sap' }, create: { key: 'integrations.sap', value: enabled }, update: { value: enabled } });
   const b1Batches = formData.get('b1SendBatches') === 'on' ? 'true' : 'false';
   await prisma.setting.upsert({ where: { key: 'sap.b1SendBatches' }, create: { key: 'sap.b1SendBatches', value: b1Batches }, update: { value: b1Batches } });
-  await logAudit(user, 'MASTER', 'sap-config', 'UPDATE', 'sap.settings', null, `profile=${formData.get('profile')}, autoSend=${autoSend}`);
+  await logAudit(user, 'MASTER', 'sap-config', 'UPDATE', 'sap.settings', null, `posting=${enabled}, profile=${formData.get('profile')}, autoSend=${autoSend}`);
   redirect('/admin/sap?saved=1');
 }
 
@@ -105,9 +108,14 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
   return (
     <Shell user={user} active="/admin">
       <PageTitle
-        title="SAP connection"
-        subtitle="Every approval queues a document here and the connector delivers it to SAP Business One. Waiting on IT for the Service Layer URL, CompanyDB and technical user — until then the mock profile can simulate deliveries for demos."
+        title="SAP Business One"
+        subtitle={cfg.enabled
+          ? 'Posting is ON: every final approval queues a document here and the connector delivers it to SAP. Rows that fail 5 times park as FAILED and the Admins are emailed.'
+          : 'Posting is OFF: approvals are not sent to SAP and nothing is queued. The supplier import below still works. Turn posting on only if you decide the B1 records are worth having.'}
       />
+      {!cfg.enabled && (
+        <Banner tone="warn">SAP posting is switched off. Approved reports stay in this app only.</Banner>
+      )}
 
       {searchParams.saved && <Banner tone="ok">Settings saved.</Banner>}
       {searchParams.test && <Banner tone={searchParams.testok === '1' ? 'ok' : 'warn'}>Connection test: {searchParams.test}</Banner>}
@@ -118,6 +126,10 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card title="Connection settings">
           <form action={saveConfig} className="space-y-3 text-sm">
+            <label className="flex items-center gap-2 rounded border border-stone-200 bg-stone-50 px-3 py-2">
+              <input type="checkbox" name="enabled" defaultChecked={cfg.enabled} />
+              <span><b>Post approved reports to SAP</b> <span className="text-xs text-stone-500">(master switch — off means nothing is ever sent, whatever the settings below say)</span></span>
+            </label>
             <label className="block">System profile<br />
               <select name="profile" defaultValue={cfg.profile} className="field">
                 <option value="mock">Mock — no SAP yet (validate + simulate delivery)</option>
@@ -171,7 +183,7 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
           </form>
           <div className="mt-3 flex flex-wrap gap-2">
             <form action={runTest}><ActionButton busyLabel="Testing…">Test connection</ActionButton></form>
-            <form action={runSync}><ActionButton busyLabel="Syncing…">Sync now ({counts.pending} pending)</ActionButton></form>
+            {cfg.enabled && <form action={runSync}><ActionButton busyLabel="Syncing…">Sync now ({counts.pending} pending)</ActionButton></form>}
             <form action={runPullSuppliers}><ActionButton busyLabel="Pulling from SAP…">Pull suppliers from SAP</ActionButton></form>
           </div>
         </Card>
@@ -182,7 +194,7 @@ export default async function SapAdmin({ searchParams }: { searchParams: Record<
               <details key={q.id} className="rounded border border-stone-200 p-2 text-sm">
                 <summary className="flex cursor-pointer flex-wrap items-center gap-2">
                   <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">{q.recordType === 'SAP_QM_INSPECTION_LOT' ? 'QM lot' : 'Prod conf'}</span>
-                  <span className="text-xs text-stone-500">{q.createdAt.toISOString().replace('T', ' ').slice(0, 16)}</span>
+                  <span className="text-xs text-stone-500">{fmtNptShort(q.createdAt)}</span>
                   <span className={`rounded-full px-2 py-0.5 text-xs ${q.status === 'SENT' ? 'bg-green-50 text-green-700' : q.status === 'FAILED' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{q.status}</span>
                   {q.sapDocNo && <span className="text-xs font-medium">→ {q.sapDocNo}</span>}
                   {q.attempts > 0 && q.status !== 'SENT' && <span className="text-xs text-stone-400">{q.attempts} attempt{q.attempts > 1 ? 's' : ''}</span>}
