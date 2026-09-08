@@ -14,12 +14,17 @@ async function login(formData: FormData) {
     redirect(`/login?${q}&u=${encodeURIComponent(username.trim().toLowerCase())}`);
   }
   setSessionCookie(r.userId);
-  redirect(r.mustChangePassword ? '/profile/password?first=1' : next.startsWith('/') ? next : '/');
+  // only ever return to a path inside this app (never an absolute URL someone pasted into ?next=)
+  const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/';
+  redirect(r.mustChangePassword ? '/profile/password?first=1' : safeNext);
 }
 
 export default async function LoginPage({ searchParams }: { searchParams: { error?: string; locked?: string; inactive?: string; u?: string; next?: string; out?: string } }) {
   const user = await getSessionUser();
-  if (user) redirect('/');
+  const next = searchParams.next && searchParams.next.startsWith('/') && !searchParams.next.startsWith('//') ? searchParams.next : '/';
+  // already signed in (e.g. a stale link to /login): go where they were heading
+  if (user) redirect(user.mustChangePassword ? '/profile/password?first=1' : next);
+  const bounced = Boolean(searchParams.next) && !searchParams.error && !searchParams.locked && !searchParams.inactive && !searchParams.out;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <form action={login} className="w-full max-w-sm space-y-4 rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
@@ -29,6 +34,11 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
         </div>
         {searchParams.out && (
           <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">You have been signed out.</div>
+        )}
+        {bounced && (
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Your session has ended (signed out, expired, or the browser dropped its cookie). Sign in and you&apos;ll be taken straight back to where you were.
+          </div>
         )}
         {searchParams.error && (
           <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -45,7 +55,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
             This account has been deactivated. Ask an Admin to reactivate it.
           </div>
         )}
-        <input type="hidden" name="next" value={searchParams.next ?? '/'} />
+        <input type="hidden" name="next" value={next} />
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-stone-700">Username</span>
           <input name="username" required autoFocus autoCapitalize="none" autoComplete="username" className="field" defaultValue={searchParams.u ?? ''} />
