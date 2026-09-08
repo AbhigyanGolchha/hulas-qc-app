@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { SignaturePad } from '@/components/signature-pad';
 
-export function ProfileSignature({ current }: { current: string | null }) {
+export function ProfileSignature({ current, userId }: { current: string | null; userId: string }) {
   const router = useRouter();
   const [redraw, setRedraw] = useState(!current);
   const [saving, setSaving] = useState(false);
@@ -45,7 +45,7 @@ export function ProfileSignature({ current }: { current: string | null }) {
       {redraw && (
         <div className="space-y-2">
           {current && <p className="text-xs text-stone-500">Drawing a new signature replaces the saved one. <button className="text-brand-700 underline" onClick={() => setRedraw(false)}>Keep the current one instead</button></p>}
-          <SignaturePad onSave={save} saving={saving} />
+          <SignaturePad onSave={save} saving={saving} draftKey={`sig:${userId}`} />
         </div>
       )}
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}

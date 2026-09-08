@@ -6,6 +6,14 @@
   color-scheme: light;
 }
 
+/* No swipe-to-go-back / pull-to-refresh: a signature stroke must never turn
+   into a browser navigation. (Chrome desktop + Android honour this; iOS Safari's
+   edge swipe cannot be blocked, which is why the pad also keeps a draft.) */
+html,
+body {
+  overscroll-behavior: none;
+}
+
 body {
   @apply bg-stone-100 text-stone-900 antialiased;
 }

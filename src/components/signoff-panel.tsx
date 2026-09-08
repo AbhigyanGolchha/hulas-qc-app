@@ -203,7 +203,7 @@ export function SignoffPanel({
       {showPad && (
         <div className="mt-3 rounded-lg border border-brand-100 bg-brand-50/30 p-3">
           <p className="mb-2 text-sm font-medium">First time — draw your signature (saved to your profile, reused everywhere):</p>
-          <SignaturePad onSave={savePadAndSign} saving={padSaving} />
+          <SignaturePad onSave={savePadAndSign} saving={padSaving} draftKey={`sig:${currentUserId ?? 'me'}`} />
         </div>
       )}
       {error && <div className="mt-2 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}

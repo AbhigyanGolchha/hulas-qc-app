@@ -49,7 +49,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: { ok
             signature plus your name and the exact time. You can replace or remove it any time — reports
             you already signed keep the signature as it was then.
           </p>
-          <ProfileSignature current={dbUser.signatureData} />
+          <ProfileSignature current={dbUser.signatureData} userId={user.id} />
         </Card>
 
         <Card title="Email & notifications">
