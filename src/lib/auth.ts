@@ -3,7 +3,7 @@
 // for LOCK_MINUTES after MAX_FAILED tries; every login / failure / logout is
 // audited; new accounts and admin resets force a password change on first use.
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { prisma } from './db';
 
@@ -89,7 +89,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 // but the password page until they've chosen their own password.
 export async function requireUser(opts: { allowPasswordChange?: boolean } = {}): Promise<SessionUser> {
   const user = await getSessionUser();
-  if (!user) redirect('/login');
+  if (!user) {
+    // no session (expired, signed out elsewhere, cookies cleared): remember where
+    // they were so the login page can bring them straight back
+    let here: string | null = null;
+    try { here = headers().get('x-pathname'); } catch { here = null; }
+    redirect(here && here.startsWith('/') && here !== '/' && !here.startsWith('/login') ? `/login?next=${encodeURIComponent(here)}` : '/login');
+  }
   if (user.mustChangePassword && !opts.allowPasswordChange) redirect('/profile/password?first=1');
   return user;
 }
