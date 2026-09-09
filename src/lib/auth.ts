@@ -101,10 +101,21 @@ export async function requireUser(opts: { allowPasswordChange?: boolean } = {}):
 }
 
 export function setSessionCookie(userId: string) {
+  // The plant reaches the server over plain http on the LAN (http://192.168.x.x:3000).
+  // A cookie flagged Secure is silently dropped by the browser on such a URL and the
+  // user is bounced to the login page on every click — so only flag it Secure when
+  // this request actually came in over https (directly or via a proxy).
+  let https = false;
+  try {
+    const h = headers();
+    https = (h.get('x-forwarded-proto') ?? '').split(',')[0].trim() === 'https' || process.env.COOKIE_SECURE === '1';
+  } catch {
+    https = process.env.COOKIE_SECURE === '1';
+  }
   cookies().set(COOKIE, createSessionToken(userId), {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production' && process.env.COOKIE_INSECURE !== '1',
+    secure: https,
     path: '/',
     maxAge: MAX_AGE,
   });
