@@ -1,4 +1,4 @@
-import { formatAdLong, formatMiti } from '@/lib/dates';
+import { formatAdLong, formatMiti, fmtNpt } from '@/lib/dates';
 
 export function PrintHeader({ title, companyName, sub }: { title: string; companyName: string; sub?: string }) {
   return (
@@ -41,7 +41,7 @@ export function SignRow({ signs }: { signs: PrintSign[] }) {
           {s.name && (
             <div className="text-[9px] text-stone-600">
               {s.at
-                ? `Digitally signed ${s.at.toLocaleString('en-GB', { timeZone: 'Asia/Kathmandu', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} NPT`
+                ? `Digitally signed ${fmtNpt(s.at)}`
                 : 'Digitally signed'}
             </div>
           )}

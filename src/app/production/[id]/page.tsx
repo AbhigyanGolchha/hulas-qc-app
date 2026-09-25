@@ -10,7 +10,7 @@ import { slotViews } from '@/lib/sign';
 import { canApprove, canUnlock } from '@/lib/constants';
 import { canApproveNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
-import { parsePacked, kgToUnits } from '@/lib/calc';
+import { parsePacked, kgToUnits, lotConsumedKg } from '@/lib/calc';
 import { isSapEnabled } from '@/lib/connector';
 
 export const dynamic = 'force-dynamic';
@@ -29,17 +29,40 @@ export default async function ProductionPage({ params }: { params: { id: string 
   });
   if (!r) notFound();
 
-  const [packSizes, intakes, slots, me] = await Promise.all([
+  const [packSizes, intakes, suppliers, slots, me] = await Promise.all([
     prisma.packSize.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, label: true, grams: true } }),
+    // lots for this mill (or not yet assigned), minus rejected ones, with what
+    // other production reports have already taken from them
     prisma.intakeReport.findMany({
-      where: { OR: [{ millId: r.millId }, { millId: null }] },
+      where: {
+        AND: [
+          { OR: [{ millId: r.millId }, { millId: null }] },
+          { OR: [{ decision: null }, { decision: { not: 'REJECTED' } }] },
+        ],
+      },
       orderBy: { dateAd: 'desc' },
-      take: 50,
-      include: { material: true, supplier: true },
+      include: { material: true, supplier: true, productionInputs: { select: { reportId: true, kantaKg: true, netKg: true } } },
     }),
-    slotViews('production', params.id),
+    prisma.supplier.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { name: true } }),
+    slotViews('production', params.id, user.role),
     prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
   ]);
+
+  // remaining = lot weight − what OTHER reports took; the form subtracts this
+  // report's own rows live. Fully used lots drop off (unless linked here).
+  const linkedHere = new Set(r.inputs.map((i) => i.intakeReportId).filter(Boolean));
+  const intakeOptions = intakes
+    .map((i) => {
+      const usedElsewhere = i.productionInputs.filter((x) => x.reportId !== r.id).reduce((a, x) => a + lotConsumedKg(x), 0);
+      return {
+        id: i.id,
+        label: `${i.reportNo} — ${i.material.name}${i.supplier ? ' · ' + i.supplier.name : ''}`,
+        supplierName: i.supplier?.name ?? null,
+        weightKg: i.weightKg,
+        availableKg: i.weightKg != null ? Math.max(0, i.weightKg - usedElsewhere) : null,
+      };
+    })
+    .filter((o) => o.availableKg === null || o.availableKg > 0 || linkedHere.has(o.id));
 
   const extras = r.processExtras ? JSON.parse(r.processExtras) : {};
   // the saved breakdown is an override only if it differs from the downtime log's own sum
@@ -111,7 +134,8 @@ export default async function ProductionPage({ params }: { params: { id: string 
       <ProductionForm
         initial={initial}
         packSizes={packSizes}
-        intakeOptions={intakes.map((i) => ({ id: i.id, label: `${i.reportNo} — ${i.material.name}${i.supplier ? ' · ' + i.supplier.name : ''} (${i.weightKg?.toLocaleString('en-IN') ?? '?'} kg)` }))}
+        intakeOptions={intakeOptions}
+        suppliers={suppliers.map((x) => x.name)}
         canApprove={canApprove(user.role)}
         canUnlock={canUnlock(user.role)}
         sapEnabled={await isSapEnabled()}

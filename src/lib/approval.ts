@@ -33,3 +33,12 @@ export async function canApproveNow(kind: RecordKind, approvalStage: number, rol
   if (!stage) return role === 'ADMIN' || role === 'MANAGER'; // orphaned mid-flow record — managers may finish it
   return roleMayApprove(stage, role);
 }
+
+// Who may set an intake lot's Decision (Accepted / Accepted with deduction /
+// Rejected) and its deductions: Manager/Admin at any time, otherwise only the
+// approver of the stage the report is waiting on. Everyone else fills in the
+// tests and submits — the decision is part of approving, never self-served.
+export async function canSetDecision(kind: RecordKind, rec: { status: string; approvalStage: number }, role: string): Promise<boolean> {
+  if (role === 'ADMIN' || role === 'MANAGER') return true;
+  return rec.status === 'SUBMITTED' && (await canApproveNow(kind, rec.approvalStage ?? 0, role));
+}

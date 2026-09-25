@@ -3,7 +3,7 @@
 // the CSV export, so all three always show the same numbers.
 import { prisma } from './db';
 import { adIso, addDays, todayKathmandu } from './dates';
-import { parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from './calc';
+import { parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct, countsInOutput } from './calc';
 
 export function weekStartOf(adIsoStr: string): string {
   const [y, m, d] = adIsoStr.split('-').map(Number);
@@ -78,7 +78,7 @@ export async function buildWeekly(start: string): Promise<Weekly> {
       let out = 0, main = 0;
       for (const row of r.rows) {
         const kg = rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg));
-        out += kg;
+        if (countsInOutput(row.product.kind)) out += kg; // dust/loss rows are listed but never counted
         const p = products.get(row.productId) ?? { productId: row.productId, name: row.product.name, kind: row.product.kind, kg: 0, pctOfInput: null };
         p.kg += kg;
         products.set(row.productId, p);
@@ -102,7 +102,7 @@ export async function buildWeekly(start: string): Promise<Weekly> {
         electricityKwh: r.electricityKwh, manpower: r.manpower,
       };
     });
-    for (const p of products.values()) p.pctOfInput = netInput && p.kg ? round2((p.kg / netInput) * 100) : null;
+    for (const p of products.values()) p.pctOfInput = netInput && p.kg && countsInOutput(p.kind) ? round2((p.kg / netInput) * 100) : null;
     return {
       millId: mill.id,
       millName: mill.name,
@@ -139,7 +139,7 @@ export function weeklyCsvRows(w: Weekly): (string | number | null)[][] {
   rows.push([]);
   rows.push(['OUTPUT BY PRODUCT']);
   rows.push(['Mill', 'Product', 'Kind', 'kg', '% of input']);
-  for (const m of w.mills) for (const p of m.products) rows.push([m.millName, p.name, p.kind === 'BYPRODUCT' ? 'by-product' : 'main product', p.kg, p.pctOfInput]);
+  for (const m of w.mills) for (const p of m.products) rows.push([m.millName, p.name, p.kind === 'BYPRODUCT' ? 'by-product' : p.kind === 'LOSS' ? 'loss (not in output)' : 'main product', p.kg, p.pctOfInput]);
   rows.push([]);
   rows.push(['DAY BY DAY']);
   rows.push(['Mill', 'Date AD', 'Miti BS', 'Report No', 'Batch', 'Status', 'In (kg)', 'Out (kg)', 'Main (kg)', 'Recovery %', 'Main yield %', 'Shift (min)', 'Breakdown (min)', 'Efficiency %', 'Manpower', 'kWh']);

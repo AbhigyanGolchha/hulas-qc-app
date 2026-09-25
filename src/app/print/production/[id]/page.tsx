@@ -3,8 +3,8 @@ import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
-import { getSignatures } from '@/lib/sign';
-import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct, packedTotalKg, kgToUnits, fmtInt } from '@/lib/calc';
+import { getSignatures, printSlots } from '@/lib/sign';
+import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct, packedTotalKg, kgToUnits, fmtInt, countsInOutput } from '@/lib/calc';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,9 +32,13 @@ export default async function PrintProduction({ params }: { params: { id: string
     const units = row.packedUnits ? parsePacked(row.packedUnits) : kgToUnits(kg, packSizes);
     return { row, kg, units, packed: packedTotalKg(kg), total: rowTotalKg(row.semiFinishedKg, kg) };
   });
-  const totalOutput = rowsCalc.reduce((a, x) => a + x.total, 0);
-  const totalPacked = rowsCalc.reduce((a, x) => a + x.packed, 0);
-  const totalLoose = rowsCalc.reduce((a, x) => a + (x.row.semiFinishedKg || 0), 0);
+  // dust/loss rows print below the totals, like "Aspirator Dust" on the paper
+  // Maida report — never inside Total output or any %
+  const outCalc = rowsCalc.filter((x) => countsInOutput(x.row.product.kind));
+  const lossCalc = rowsCalc.filter((x) => !countsInOutput(x.row.product.kind));
+  const totalOutput = outCalc.reduce((a, x) => a + x.total, 0);
+  const totalPacked = outCalc.reduce((a, x) => a + x.packed, 0);
+  const totalLoose = outCalc.reduce((a, x) => a + (x.row.semiFinishedKg || 0), 0);
   const mainOutput = rowsCalc.filter((x) => x.row.product.kind === 'PRODUCT').reduce((a, x) => a + x.total, 0);
   const extras = r.processExtras ? JSON.parse(r.processExtras) : null;
 
@@ -108,7 +112,7 @@ export default async function PrintProduction({ params }: { params: { id: string
           </tr>
         </thead>
         <tbody>
-          {rowsCalc.map(({ row, kg, units, packed, total }) => (
+          {outCalc.map(({ row, kg, units, packed, total }) => (
             <tr key={row.id}>
               <td className={td}>{row.product.name}</td>
               <td className={td}>{row.semiFinishedKg ? fmtKg(row.semiFinishedKg) : ''}</td>
@@ -132,6 +136,16 @@ export default async function PrintProduction({ params }: { params: { id: string
             <td className={`${td} font-bold`}>{fmtKg(mainOutput)}</td>
             <td className={`${td} font-bold`}>{netInput ? fmtPct(round2((mainOutput / netInput) * 100)) : ''}</td>
           </tr>
+          {lossCalc.map(({ row, kg, units, packed, total }) => (
+            <tr key={row.id}>
+              <td className={td}>{row.product.name} <span className="text-stone-500">(not in output)</span></td>
+              <td className={td}>{row.semiFinishedKg ? fmtKg(row.semiFinishedKg) : ''}</td>
+              {packSizes.map((p) => <td key={p.id} className={td}>{units[p.id] ? <>{fmtInt(units[p.id])}<span className="text-stone-500"> / {fmtKg(kg[p.id])}</span></> : ''}</td>)}
+              <td className={td}>{packed ? fmtKg(packed) : ''}</td>
+              <td className={`${td} font-medium`}>{total ? fmtKg(total) : ''}</td>
+              <td className={td}></td>
+            </tr>
+          ))}
         </tbody>
       </table>
 
@@ -160,10 +174,7 @@ export default async function PrintProduction({ params }: { params: { id: string
 
       <SignRow
         signs={toPrintSigns(
-          [
-            { slot: 'Prepared by', legacyName: r.preparedBy },
-            { slot: 'Approved by', legacyName: r.approvedBy, legacyAt: r.approvedAt },
-          ],
+          await printSlots('production', { 'Prepared by': r.preparedBy }, { name: r.approvedBy, at: r.approvedAt }),
           await getSignatures('production', r.id),
         )}
       />

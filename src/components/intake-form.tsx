@@ -56,6 +56,8 @@ export function IntakeForm({
   suppliers,
   canApprove,
   canUnlock,
+  canDecide,
+  decider,
   sapEnabled = false,
 }: {
   initial: IntakeFormData;
@@ -63,16 +65,20 @@ export function IntakeForm({
   suppliers: { id: string; name: string }[];
   canApprove: boolean;
   canUnlock: boolean;
+  canDecide: boolean; // approver of the current stage (or Manager/Admin) — only they set the Decision
+  decider: string; // who does, in words, for everyone else
   sapEnabled?: boolean;
 }) {
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
   const editable = ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(initial.status);
-  const { saveState, notify, flushNow } = useAutosave(`/api/records/intake/${initial.id}`, editable);
+  const { saveState, saveError, notify, flushNow } = useAutosave(`/api/records/intake/${initial.id}`, editable);
 
   function snapshot(h = header, r = rows) {
+    // non-approvers never send the decision fields — the server keeps what's stored
+    const { decision, decisionReason, weightCutKg, priceCutPerQuintal, deductionAmount, ...rest } = h;
     return {
-      header: h,
+      header: canDecide ? h : rest,
       results: r.map((row) => ({ parameterId: row.parameterId, valueNum: row.valueNum, valueText: row.valueText, note: row.note })),
     };
   }
@@ -106,7 +112,7 @@ export function IntakeForm({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <WorkflowBar type="intake" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
-        <SaveIndicator state={saveState} />
+        <SaveIndicator state={saveState} error={saveError} />
       </div>
 
       {/* ---------- Header ---------- */}
@@ -233,13 +239,13 @@ export function IntakeForm({
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <L label="Decision">
-            <select className="field" disabled={!editable} value={header.decision} onChange={(e) => setH('decision', e.target.value)}>
+            <select className="field" disabled={!editable || !canDecide} value={header.decision} onChange={(e) => setH('decision', e.target.value)}>
               <option value="">— pending —</option>
               {Object.entries(DECISIONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </L>
           {(header.decision === 'ACCEPTED_DEDUCTION' || header.decision === 'REJECTED') && (
-            <L label="Reason (required)"><input className="field" disabled={!editable} value={header.decisionReason} onChange={(e) => setH('decisionReason', e.target.value)} /></L>
+            <L label="Reason (required)"><input className="field" disabled={!editable || !canDecide} value={header.decisionReason} onChange={(e) => setH('decisionReason', e.target.value)} /></L>
           )}
         </div>
         {showDeductions && (
@@ -247,13 +253,13 @@ export function IntakeForm({
             <div className="mb-2 text-sm font-medium text-stone-700">Deductions — fill any that apply, the math updates live</div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <L label="Weight cut / katti (kg off payable weight)">
-                <input className="field" type="number" step="any" disabled={!editable} value={header.weightCutKg} onChange={(e) => setH('weightCutKg', e.target.value)} placeholder="e.g. 512" />
+                <input className="field" type="number" step="any" disabled={!editable || !canDecide} value={header.weightCutKg} onChange={(e) => setH('weightCutKg', e.target.value)} placeholder="e.g. 512" />
               </L>
               <L label="Price cut (₨ per quintal off the rate)">
-                <input className="field" type="number" step="any" disabled={!editable} value={header.priceCutPerQuintal} onChange={(e) => setH('priceCutPerQuintal', e.target.value)} placeholder="e.g. 50" />
+                <input className="field" type="number" step="any" disabled={!editable || !canDecide} value={header.priceCutPerQuintal} onChange={(e) => setH('priceCutPerQuintal', e.target.value)} placeholder="e.g. 50" />
               </L>
               <L label="Flat deduction (₨)">
-                <input className="field" type="number" step="any" disabled={!editable} value={header.deductionAmount} onChange={(e) => setH('deductionAmount', e.target.value)} placeholder="e.g. 5000" />
+                <input className="field" type="number" step="any" disabled={!editable || !canDecide} value={header.deductionAmount} onChange={(e) => setH('deductionAmount', e.target.value)} placeholder="e.g. 5000" />
               </L>
             </div>
             {value.grossValue !== null ? (
@@ -268,9 +274,14 @@ export function IntakeForm({
             )}
           </div>
         )}
+        {!canDecide && (
+          <p className="mt-3 rounded border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
+            The Decision and any deductions are set by <b>{decider}</b> when approving. Fill in the tests and submit.
+          </p>
+        )}
         <p className="mt-4 text-xs text-stone-500">
-          Sign-offs are digital now — see the <b>Digital sign-offs</b> panel below. Submitting signs
-          your slot; the godown keeper co-signs there; approval signs the manager slot.
+          Sign-offs are digital — see the <b>Digital sign-offs</b> panel below. Each slot can only be
+          signed by its role; submitting signs your own slot; approval signs the approver slot.
         </p>
       </section>
     </div>

@@ -77,7 +77,7 @@ export default async function PrintWeekly({ searchParams }: { searchParams: { st
               <tbody>
                 {m.products.map((p) => (
                   <tr key={p.productId}>
-                    <td className={td}>{p.name}{p.kind === 'BYPRODUCT' ? ' (by-product)' : ''}</td>
+                    <td className={td}>{p.name}{p.kind === 'BYPRODUCT' ? ' (by-product)' : p.kind === 'LOSS' ? ' (not counted in output)' : ''}</td>
                     <td className={td}>{fmtKg(p.kg)}</td>
                     <td className={td}>{p.pctOfInput !== null ? fmtPct(p.pctOfInput) : ''}</td>
                   </tr>

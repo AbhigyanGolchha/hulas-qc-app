@@ -51,7 +51,7 @@ export function QcForm({ initial, canApprove, canUnlock, isManager, sapEnabled =
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
   const editable = ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(initial.status);
-  const { saveState, notify, flushNow } = useAutosave(`/api/records/qc/${initial.id}`, editable);
+  const { saveState, saveError, notify, flushNow } = useAutosave(`/api/records/qc/${initial.id}`, editable);
 
   function snapshot(h = header, r = rows) {
     return {
@@ -96,7 +96,7 @@ export function QcForm({ initial, canApprove, canUnlock, isManager, sapEnabled =
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <WorkflowBar type="qc" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
-        <SaveIndicator state={saveState} />
+        <SaveIndicator state={saveState} error={saveError} />
       </div>
 
       <section className="rounded-xl border border-stone-200 bg-white p-4">

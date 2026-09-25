@@ -231,7 +231,8 @@ async function main() {
   const suji = await product(rfm.id, 'Suji', { shelfLifeDays: 90, hasQcSheet: true, sortOrder: 3 });
   await product(rfm.id, 'Choker (bran)', { kind: 'BYPRODUCT', sortOrder: 4 });
   await product(rfm.id, 'Broken + usable dust + stem', { kind: 'BYPRODUCT', sortOrder: 5 });
-  await product(rfm.id, 'Dust', { kind: 'BYPRODUCT', sortOrder: 6 });
+  // like "Aspirator Dust" on the paper report: recorded, never counted in output
+  await product(rfm.id, 'Dust', { kind: 'LOSS', sortOrder: 6 });
 
   // Chakki Atta Mill
   const chakki = await product(cam.id, 'Chakki Atta', { shelfLifeDays: 120, hasQcSheet: true, sortOrder: 1 });
@@ -258,7 +259,7 @@ async function main() {
   const uric: SpecDef = { name: 'Uric acid', unit: 'mg/kg', op: 'LTE', max: 100, display: '≤ 100 mg/kg', tag: REF, regRef: 'FSSAI' };
 
   const maidaParams = await createParams({ productId: maida.id }, [
-    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3 },
+    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3, hasIr: true },
     { name: 'Final Moisture Content', unit: '% by wt', op: 'LT', max: 14.0, display: '< 14.0%', sampleCount: 3, hasIr: true },
     { name: 'Gluten (dry basis)', unit: '% by wt', op: 'GT', min: 8.0, display: '> 8.0%', regRef: 'FSSAI: gluten ≥ 7.5%' },
     { name: 'Total Ash (dry basis)', unit: '% by wt', op: 'LT', max: 0.70, display: '< 0.70%', regRef: 'FSSAI: ash ≤ 1.0%', note: 'Hulas internal limit is deliberately tighter than FSSAI.' },
@@ -269,12 +270,13 @@ async function main() {
     { name: 'Granularity >180µ (per 100 gm)', unit: 'gm', op: 'NIL', display: '>180µ = 0' },
     { name: 'Granularity >150µ (per 100 gm)', unit: 'gm', op: 'NIL', display: '>150µ = 0' },
     { name: 'Granularity >132µ (per 100 gm)', unit: 'gm', op: 'RANGE', min: 0, max: 0.3, display: '>132µ = 0–0.3' },
-    { name: 'Granularity <118µ (per 100 gm)', unit: 'gm', op: 'RANGE', min: 99.7, max: 100, display: '<118µ = 99.7–100' },
+    // record-only: can't pass alongside ">118µ = 1–4"; the lab passes on the coarse bands
+    { name: 'Granularity <118µ (per 100 gm)', unit: 'gm', op: 'RECORD', min: 99.7, max: 100, display: '<118µ = 99.7–100', note: 'Recorded, not auto-failed: it cannot pass together with ">118µ = 1–4", and the lab passes sheets on the coarser bands.' },
     uric,
   ]);
 
   const attaParams = await createParams({ productId: millAtta.id }, [
-    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3 },
+    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3, hasIr: true },
     { name: 'Final Moisture Content', unit: '% by wt', op: 'LT', max: 14.0, display: '< 14.0%', sampleCount: 3, hasIr: true },
     { name: 'Gluten (dry basis)', unit: '% by wt', op: 'GT', min: 6.0, display: '> 6.0%', regRef: 'FSSAI: gluten ≥ 6.0%' },
     { name: 'Total Ash (dry basis)', unit: '% by wt', op: 'LT', max: 2.0, display: '< 2.0%', regRef: 'FSSAI: ash ≤ 2.0%' },
@@ -288,7 +290,7 @@ async function main() {
   ]);
 
   const sujiParams = await createParams({ productId: suji.id }, [
-    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3 },
+    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3, hasIr: true },
     { name: 'Final Moisture Content', unit: '% by wt', op: 'LT', max: 14.5, display: '< 14.5%', sampleCount: 3, hasIr: true, regRef: 'FSSAI suji: moisture ≤ 13.0%' },
     { name: 'Gluten (dry basis)', unit: '% by wt', op: 'GT', min: 6.0, display: '> 6.0%' },
     { name: 'Total Ash (dry basis)', unit: '% by wt', op: 'LT', max: 0.70, display: '< 0.70%' },
@@ -302,7 +304,7 @@ async function main() {
 
   // Chakki Atta 📖
   await createParams({ productId: chakki.id }, [
-    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3, tag: REF },
+    { name: 'First Break Moisture', unit: '% by wt', op: 'LT', max: 18.0, display: '< 18.0%', sampleCount: 3, hasIr: true, tag: REF },
     { name: 'Final Moisture Content', unit: '% by wt', op: 'LT', max: 14.0, display: '< 14.0% (target ≤ 13.0% — 120-day shelf life)', sampleCount: 3, hasIr: true, tag: REF },
     { name: 'Gluten (dry basis)', unit: '% by wt', op: 'GT', min: 6.0, display: '> 6.0%', tag: REF, regRef: 'FSSAI atta' },
     { name: 'Total Ash (dry basis)', unit: '% by wt', op: 'LT', max: 2.0, display: '< 2.0%', tag: REF, regRef: 'FSSAI atta' },

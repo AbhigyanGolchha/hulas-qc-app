@@ -70,8 +70,8 @@ export default async function WeeklyReport({ searchParams }: { searchParams: { s
                     </thead>
                     <tbody>
                       {m.products.map((p) => (
-                        <tr key={p.productId} className={`border-t border-stone-100 ${p.kind === 'BYPRODUCT' ? 'text-stone-500' : ''}`}>
-                          <td className="py-1">{p.name}{p.kind === 'BYPRODUCT' && <span className="ml-1 text-xs text-stone-400">(by-product)</span>}</td>
+                        <tr key={p.productId} className={`border-t border-stone-100 ${p.kind !== 'PRODUCT' ? 'text-stone-500' : ''}`}>
+                          <td className="py-1">{p.name}{p.kind === 'BYPRODUCT' && <span className="ml-1 text-xs text-stone-400">(by-product)</span>}{p.kind === 'LOSS' && <span className="ml-1 text-xs text-stone-400">(not counted in output)</span>}</td>
                           <td className="py-1 text-right tabular-nums">{fmtKg(p.kg)}</td>
                           <td className="py-1 text-right tabular-nums">{p.pctOfInput !== null ? fmtPct(p.pctOfInput) : '—'}</td>
                         </tr>

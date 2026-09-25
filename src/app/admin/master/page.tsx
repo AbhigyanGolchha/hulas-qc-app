@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
+import { PRODUCT_KINDS } from '@/lib/calc';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,9 +44,12 @@ async function updateProduct(formData: FormData) {
   const id = String(formData.get('id'));
   const shelfLifeDays = formData.get('shelfLifeDays') ? Number(formData.get('shelfLifeDays')) : null;
   const sapMaterialCode = String(formData.get('sap') || '').trim() || null;
+  const kindRaw = String(formData.get('kind') || '');
   const before = await prisma.product.findUnique({ where: { id } });
-  await prisma.product.update({ where: { id }, data: { shelfLifeDays, sapMaterialCode } });
+  const kind = kindRaw in PRODUCT_KINDS ? kindRaw : before?.kind;
+  await prisma.product.update({ where: { id }, data: { shelfLifeDays, sapMaterialCode, kind } });
   await logAudit(user, 'MASTER', id, 'UPDATE', 'product.shelfLifeDays', String(before?.shelfLifeDays), String(shelfLifeDays));
+  if (before && kind !== before.kind) await logAudit(user, 'MASTER', id, 'UPDATE', 'product.kind', before.kind, kind);
   revalidatePath('/admin/master');
 }
 
@@ -107,12 +111,21 @@ export default async function MasterAdmin() {
           </div>
         </Card>
 
-        <Card title="Products — shelf life (drives best-before)">
+        <Card title="Products — type & shelf life (drives best-before)">
+          <p className="mb-2 text-xs text-stone-500">
+            Type decides how a product counts on Daily Production: main products make the main-product yield; by-products count in
+            total output; <b>loss / dust</b> is recorded but kept out of total output and every % (like Aspirator Dust on the paper report).
+          </p>
           <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
             {products.map((p) => (
               <form key={p.id} action={updateProduct} className="flex flex-wrap items-end gap-2 text-sm">
                 <input type="hidden" name="id" value={p.id} />
-                <span className="w-56 truncate">{p.mill.name} — <b>{p.name}</b>{p.kind === 'BYPRODUCT' && <span className="text-xs text-stone-400"> (by-product)</span>}</span>
+                <span className="w-56 truncate">{p.mill.name} — <b>{p.name}</b></span>
+                <label className="text-xs">Type<br />
+                  <select name="kind" defaultValue={p.kind} className="field w-44">
+                    {Object.entries(PRODUCT_KINDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </label>
                 <label className="text-xs">Shelf life (days)<br /><input name="shelfLifeDays" type="number" defaultValue={p.shelfLifeDays ?? ''} className="field w-24" /></label>
                 <label className="text-xs">SAP material<br /><input name="sap" defaultValue={p.sapMaterialCode ?? ''} className="field w-28" /></label>
                 <button className="btn-secondary">Save</button>

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
-import { getSignatures } from '@/lib/sign';
+import { getSignatures, printSlots } from '@/lib/sign';
 import { DECISIONS, type Decision } from '@/lib/constants';
 import { intakeValue, fmtMoney, fmtKg } from '@/lib/calc';
 
@@ -115,11 +115,7 @@ export default async function PrintIntake({ params }: { params: { id: string } }
 
       <SignRow
         signs={toPrintSigns(
-          [
-            { slot: 'Godown Keeper', legacyName: r.godownKeeper },
-            { slot: 'Quality Controller', legacyName: r.checkedBy },
-            { slot: 'Manager', legacyName: r.approvedBy, legacyAt: r.approvedAt },
-          ],
+          await printSlots('intake', { 'Godown Keeper': r.godownKeeper, 'Quality Controller': r.checkedBy }, { name: r.approvedBy, at: r.approvedAt }),
           await getSignatures('intake', r.id),
         )}
       />

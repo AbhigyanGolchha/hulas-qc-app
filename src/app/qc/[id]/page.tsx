@@ -33,7 +33,7 @@ export default async function QcPage({ params }: { params: { id: string } }) {
       include: { product: true },
       orderBy: { product: { sortOrder: 'asc' } },
     }),
-    slotViews('qc', params.id),
+    slotViews('qc', params.id, user.role),
     prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
   ]);
 
