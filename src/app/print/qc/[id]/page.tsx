@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
-import { getSignatures } from '@/lib/sign';
+import { getSignatures, printSlots } from '@/lib/sign';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,10 +82,7 @@ export default async function PrintQc({ params }: { params: { id: string } }) {
 
       <SignRow
         signs={toPrintSigns(
-          [
-            { slot: 'Checked by', legacyName: r.checkedBy },
-            { slot: 'Approved by (GM)', legacyName: r.approvedBy, legacyAt: r.approvedAt },
-          ],
+          await printSlots('qc', { 'Checked by': r.checkedBy }, { name: r.approvedBy, at: r.approvedAt }),
           await getSignatures('qc', r.id),
         )}
       />

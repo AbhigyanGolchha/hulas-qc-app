@@ -6,7 +6,7 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card, StatusBadge, PassFailBadge, DualDate } from '@/components/ui';
 import { adIso, addDays, adToBs, formatMiti, formatAdLong } from '@/lib/dates';
-import { fmtKg, parsePacked, rowTotalKg } from '@/lib/calc';
+import { fmtKg, parsePacked, rowTotalKg, countsInOutput } from '@/lib/calc';
 import { DECISIONS, type Decision } from '@/lib/constants';
 import { isSapEnabled } from '@/lib/connector';
 
@@ -90,7 +90,7 @@ export default async function BatchPage({ params }: { params: { id: string } }) 
             <ul className="space-y-3 text-sm">
               {b.productionReports.map((r) => {
                 const net = r.inputs.reduce((a, i) => a + (i.netKg ?? 0), 0);
-                const out = r.rows.reduce((a, row) => a + rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)), 0);
+                const out = r.rows.filter((x) => countsInOutput(x.product.kind)).reduce((a, row) => a + rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)), 0);
                 return (
                   <li key={r.id}>
                     <div className="flex flex-wrap items-center gap-2">
@@ -100,7 +100,7 @@ export default async function BatchPage({ params }: { params: { id: string } }) 
                     </div>
                     <div className="mt-1 text-xs text-stone-500">
                       {r.rows.filter((row) => rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)) > 0)
-                        .map((row) => `${row.product.name} ${fmtKg(rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)))} kg`)
+                        .map((row) => `${row.product.name} ${fmtKg(rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)))} kg${countsInOutput(row.product.kind) ? '' : ' (not in output)'}`)
                         .join(' · ')}
                     </div>
                   </li>
@@ -171,7 +171,7 @@ export default async function BatchPage({ params }: { params: { id: string } }) 
             {b.retentionSamples.map((s) => (
               <li key={s.id}>
                 <span className="font-medium">{s.productName}</span> — {s.location}
-                {s.reviewDate && <span className="text-stone-500"> · review {adIso(s.reviewDate)}</span>}
+                {s.reviewDate && <span className="text-stone-500"> · review {adIso(s.reviewDate)} · Miti {formatMiti(adToBs(adIso(s.reviewDate)))}</span>}
               </li>
             ))}
           </ul>

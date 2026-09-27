@@ -1,18 +1,23 @@
 'use client';
 // Digital sign-off panel shown on every record page. Each slot mirrors a
-// signature line on the old paper form. Submitting signs the submitter's
-// slot automatically; this panel covers co-signers (godown keeper), lets a
-// signer take their signature back while the record is still editable, and
-// shows everyone what's signed. The approver slot fills only via Approve.
+// signature line on the old paper form and belongs to one role (Admin →
+// Approval matrix). Submitting signs the submitter's own slot automatically;
+// this panel lets the other role-holders co-sign (only they get the button),
+// lets a signer take their signature back while the record is still
+// editable, and shows everyone what's signed. Approver slots fill only via Approve.
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { SignaturePad } from './signature-pad';
+import { flushAllAutosaves } from './use-autosave';
 import { fmtNpt } from '@/lib/dates';
 
 export type SlotView = {
   slot: string;
   isApprover: boolean;
   isCurrentStage?: boolean; // the approval step this record is waiting on right now
+  signerRole?: string | null; // who signs this preparer slot, in words ("Godown Keeper")
+  eligibleNames?: string[]; // active users holding that role
+  canSign?: boolean; // the viewer holds the slot's role
   signedBy: string | null;
   signedById?: string | null;
   signedAt: string | null; // ISO
@@ -36,7 +41,7 @@ export function SignoffPanel({
   userHasSignature: boolean;
   canApprove?: boolean;
   currentUserId?: string;
-  canRemoveAny?: boolean; // Manager/Admin may remove anyone's preparer signature
+  canRemoveAny?: boolean; // unlock roles (approval matrix) may remove anyone's sign-off
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -99,6 +104,7 @@ export function SignoffPanel({
     setBusy(true);
     setError(null);
     try {
+      await flushAllAutosaves(); // e.g. a Decision picked a second ago must be saved before approving
       await post({ action, reason });
       router.refresh();
     } catch (e) {
@@ -140,7 +146,8 @@ export function SignoffPanel({
     <section className="no-print rounded-xl border border-stone-200 bg-white p-4">
       <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-stone-500">Digital sign-offs</h2>
       <p className="mb-3 text-xs text-stone-500">
-        Submitting signs your slot automatically. Approving signs the {slots.find((s) => s.isApprover)?.slot ?? 'approver'} slot.
+        Each slot can only be signed by the role shown on it. Submitting signs your own slot automatically.
+        Approving signs the {slots.find((s) => s.isApprover)?.slot ?? 'approver'} slot.
         While a report is still editable you can take your signature back and sign again (each change is audited).
         Unlocking an approved report voids all signatures — everyone signs again after edits.
       </p>
@@ -189,12 +196,21 @@ export function SignoffPanel({
                 ) : (
                   <div className="mt-2 text-sm text-stone-400">signs on approval</div>
                 )
-              ) : editable ? (
+              ) : editable && s.canSign ? (
                 <button className="btn-secondary mt-2" disabled={busy} onClick={() => sign(s.slot)}>
                   Sign as {s.slot}
                 </button>
               ) : (
-                <div className="mt-2 text-sm text-stone-400">not signed</div>
+                <div className="mt-2 text-sm text-stone-400">
+                  {editable ? 'waiting for signature' : 'not signed'}
+                  {s.signerRole && (
+                    <div className="text-xs">
+                      signed by: {s.signerRole}
+                      {s.eligibleNames && s.eligibleNames.length > 0 && <> ({s.eligibleNames.join(', ')})</>}
+                      {s.eligibleNames && s.eligibleNames.length === 0 && s.signerRole !== 'anyone who can edit the report' && <> — no active user has this role yet</>}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           );

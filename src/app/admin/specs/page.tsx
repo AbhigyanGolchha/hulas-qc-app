@@ -160,6 +160,19 @@ async function toggleParameter(formData: FormData) {
   redirect(`/admin/specs?t=${sel}`);
 }
 
+// the extra "IR moisture" instrument-reading column on QC sheets (e.g. First
+// Break Moisture and Final Moisture Content on the Maida form)
+async function toggleIr(formData: FormData) {
+  'use server';
+  const user = await guardAdmin();
+  const id = String(formData.get('id'));
+  const sel = String(formData.get('template') || '');
+  const p = await prisma.parameter.findUniqueOrThrow({ where: { id } });
+  await prisma.parameter.update({ where: { id }, data: { hasIr: !p.hasIr } });
+  await logAudit(user, 'MASTER', id, 'UPDATE', 'parameter.hasIr', String(p.hasIr), String(!p.hasIr));
+  redirect(`/admin/specs?t=${sel}&msg=` + encodeURIComponent(`"${p.name}": IR moisture column ${p.hasIr ? 'removed' : 'added'}.`));
+}
+
 export default async function SpecsAdmin({ searchParams }: { searchParams: { t?: string; p?: string; msg?: string; err?: string } }) {
   const user = await requireUser();
   if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
@@ -287,6 +300,13 @@ export default async function SpecsAdmin({ searchParams }: { searchParams: { t?:
                       <input type="hidden" name="template" value={sel} />
                       <button className="text-xs text-stone-500 hover:underline">{p.active ? 'retire' : 'restore'}</button>
                     </form>
+                    {kind === 'p' && p.valueType === 'NUMBER' && (
+                      <form action={toggleIr} className="mt-1 block">
+                        <input type="hidden" name="id" value={p.id} />
+                        <input type="hidden" name="template" value={sel} />
+                        <button className="text-xs text-stone-500 hover:underline">{p.hasIr ? 'remove IR column' : 'add IR column'}</button>
+                      </form>
+                    )}
                   </td>
                 </tr>
               );

@@ -6,8 +6,7 @@ import { PageTitle } from '@/components/ui';
 import { IntakeForm, type IntakeFormData } from '@/components/intake-form';
 import { SignoffPanel } from '@/components/signoff-panel';
 import { slotViews } from '@/lib/sign';
-import { canApprove, canUnlock } from '@/lib/constants';
-import { canApproveNow } from '@/lib/approval';
+import { canApproveNow, canSetDecision, canUnlockNow, currentStage, getStages } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
 import { isSapEnabled } from '@/lib/connector';
 
@@ -27,9 +26,13 @@ export default async function IntakePage({ params }: { params: { id: string } })
   const [mills, suppliers, slots, me] = await Promise.all([
     prisma.mill.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true } }),
     prisma.supplier.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-    slotViews('intake', params.id),
+    slotViews('intake', params.id, user.role),
     prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
   ]);
+
+  const stages = await getStages('intake');
+  const decideStage = (r.status === 'SUBMITTED' && currentStage(stages, r.approvalStage)) || stages[0];
+  const decider = decideStage ? `the approver ("${decideStage.title}")` : 'the approver';
 
   const initial: IntakeFormData = {
     id: r.id,
@@ -85,9 +88,9 @@ export default async function IntakePage({ params }: { params: { id: string } })
         title={`Spot Analysis ${r.reportNo} — ${r.material.name}`}
         subtitle={<>Date {adIso(r.dateAd)} · Miti {formatMiti(r.dateBs)} · blank result = not tested (that&apos;s fine)</>}
       />
-      <IntakeForm initial={initial} mills={mills} suppliers={suppliers} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} sapEnabled={await isSapEnabled()} />
+      <IntakeForm initial={initial} mills={mills} suppliers={suppliers} canApprove={await canApproveNow('intake', r.approvalStage, user.role)} canUnlock={await canUnlockNow('intake', user.role)} canDecide={await canSetDecision('intake', r, user.role)} decider={decider} sapEnabled={await isSapEnabled()} />
       <div className="mt-5">
-        <SignoffPanel type="intake" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('intake', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
+        <SignoffPanel type="intake" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('intake', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={await canUnlockNow('intake', user.role)} />
       </div>
     </Shell>
   );

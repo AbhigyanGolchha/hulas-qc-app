@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSessionUser } from '@/lib/auth';
 import { adIso, todayKathmandu } from '@/lib/dates';
-import { parsePacked, rowTotalKg, shiftMinutes, efficiencyPct } from '@/lib/calc';
+import { parsePacked, rowTotalKg, shiftMinutes, efficiencyPct, countsInOutput } from '@/lib/calc';
 import { buildWeekly, resolveWeekStart, weeklyCsvRows } from '@/lib/weekly';
 
 function csv(rows: (string | number | null | undefined)[][]): string {
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
       ['Report No', 'Date AD', 'Miti BS', 'Mill', 'Batch', 'Net input kg', 'Total output kg', 'Main product kg', 'Total recovery %', 'Main yield %', 'Manpower', 'Shift', 'Breakdown min', 'Efficiency %', 'kWh', 'Status'],
       ...rows.map((r) => {
         const net = r.inputs.reduce((a, i) => a + (i.netKg ?? 0), 0);
-        const out = r.rows.reduce((a, row) => a + rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)), 0);
+        const out = r.rows.filter((x) => countsInOutput(x.product.kind)).reduce((a, row) => a + rowTotalKg(row.semiFinishedKg, parsePacked(row.packedKg)), 0);
         const main = r.rows.filter((x) => x.product.kind === 'PRODUCT').reduce((a, x) => a + rowTotalKg(x.semiFinishedKg, parsePacked(x.packedKg)), 0);
         const sm = shiftMinutes(r.startTime, r.closeTime);
         return [

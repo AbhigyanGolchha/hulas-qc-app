@@ -6,9 +6,10 @@ import { prisma } from '@/lib/db';
 import { getSessionUser } from '@/lib/auth';
 import { logAudit, logFieldChanges } from '@/lib/audit';
 import { evaluate, sampleAverage, suggestOverall } from '@/lib/spec';
-import { durationMinutes, netInputKg, unitsToKg } from '@/lib/calc';
-import { signRecord, unsignRecord, defaultSlot, SLOTS, type RecordKind } from '@/lib/sign';
+import { durationMinutes, netInputKg, unitsToKg, parseVendors, VENDOR_SEP } from '@/lib/calc';
+import { signRecord, unsignRecord, defaultSlot, type RecordKind } from '@/lib/sign';
 import { EDITABLE, WorkflowError, approveRecord, rejectRecord, submitRecord, unlockRecord, loadRecord } from '@/lib/workflow';
+import { canSetDecision } from '@/lib/approval';
 
 type Params = { params: { type: string; id: string } };
 
@@ -26,6 +27,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (type === 'production') return await saveProduction(id, body, user);
     return NextResponse.json({ error: 'Unknown record type' }, { status: 404 });
   } catch (e) {
+    if (e instanceof WorkflowError) return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: String((e as Error).message ?? e) }, { status: 500 });
   }
 }
@@ -48,10 +50,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (action === 'unlock') return NextResponse.json({ ok: true, ...(await unlockRecord(user, kind, id, reason)) });
 
     if (action === 'sign') {
-      // manual co-sign (e.g. the godown keeper on an intake report)
+      // manual co-sign (e.g. the godown keeper on an intake report). signRecord
+      // enforces the slot's role and refuses approval slots.
       if (!EDITABLE.includes(rec.status)) return NextResponse.json({ error: 'Approved records cannot be signed — they are already sealed' }, { status: 400 });
-      const target = slot || defaultSlot(kind, user.role);
-      if (target === SLOTS[kind].approver) return NextResponse.json({ error: 'The approver slot is signed by the Approve action' }, { status: 400 });
+      const target = slot || (await defaultSlot(kind, user.role));
+      if (!target) return NextResponse.json({ error: 'No signature slot on this report belongs to your role' }, { status: 403 });
       await signRecord(user, kind, id, target);
       return NextResponse.json({ ok: true });
     }
@@ -109,6 +112,19 @@ async function saveIntake(id: string, body: any, user: any) {
   const before = await prisma.intakeReport.findUniqueOrThrow({ where: { id } });
   await assertEditable(before.status);
   const h = body.header ?? {};
+  // Decision + deductions belong to the approver. Other users' forms don't send
+  // them (so they are left as stored); sending a change anyway is refused.
+  const DECISION_FIELDS = { decision: str, decisionReason: str, weightCutKg: num, priceCutPerQuintal: num, deductionAmount: num } as const;
+  const mayDecide = await canSetDecision('intake', before, user.role);
+  const decisionData: Record<string, unknown> = {};
+  for (const [key, parse] of Object.entries(DECISION_FIELDS)) {
+    if (!(key in h)) continue;
+    const incoming = (parse as (v: unknown) => unknown)(h[key]);
+    if (mayDecide) decisionData[key] = incoming;
+    else if (incoming !== (before as any)[key]) {
+      throw new WorkflowError('Only the approver of the step this report is waiting on can set the Decision and deductions.', 403);
+    }
+  }
   const data = {
     dateAd: h.dateAd ? new Date(h.dateAd + 'T00:00:00') : undefined,
     dateBs: str(h.dateBs) ?? undefined,
@@ -123,12 +139,8 @@ async function saveIntake(id: string, body: any, user: any) {
     bags: num(h.bags),
     bagType: str(h.bagType),
     season: str(h.season),
-    decision: str(h.decision),
-    decisionReason: str(h.decisionReason),
+    ...decisionData,
     pricePerQuintal: num(h.pricePerQuintal),
-    weightCutKg: num(h.weightCutKg),
-    priceCutPerQuintal: num(h.priceCutPerQuintal),
-    deductionAmount: num(h.deductionAmount),
     deductionRate: num(h.deductionRate),
     // godownKeeper / checkedBy are set by the digital sign-off flow, not the form
   };
@@ -191,6 +203,13 @@ async function saveQc(id: string, body: any, user: any) {
 
   const suggested = suggestOverall(statuses as any);
   const overallOverridden = Boolean(h.overallOverridden);
+  // overriding the computed PASS/FAIL is the current approver's call (approval
+  // matrix) — the form hides the switch from others, and the API refuses it too
+  if (!(await canSetDecision('qc', before, user.role))) {
+    const changed = overallOverridden !== before.overallOverridden
+      || (overallOverridden && str(h.overallResult) !== before.overallResult);
+    if (changed) throw new WorkflowError('Only the approver of the step this sheet is waiting on can override the overall PASS/FAIL result.', 403);
+  }
   const after = await prisma.qcReport.update({
     where: { id },
     data: {
@@ -218,6 +237,18 @@ async function saveProduction(id: string, body: any, user: any) {
   const before = await prisma.productionReport.findUniqueOrThrow({ where: { id } });
   await assertEditable(before.status);
   const h = body.header ?? {};
+
+  // Vendor(s): names from the supplier master only. Hand-typed text saved before
+  // this became a list may stay until someone removes it, but nothing new.
+  let vendors: string | null | undefined = undefined; // undefined = leave as stored
+  if (Array.isArray(h.vendorList)) {
+    const list = [...new Set((h.vendorList as unknown[]).map((v) => String(v).trim()).filter(Boolean))];
+    const known = new Set((await prisma.supplier.findMany({ where: { name: { in: list } }, select: { name: true } })).map((x) => x.name));
+    const legacy = new Set(parseVendors(before.vendors));
+    const unknown = list.filter((v) => !known.has(v) && !legacy.has(v));
+    if (unknown.length) throw new WorkflowError(`Vendor(s) must be chosen from the supplier list — not found: ${unknown.join(', ')}`, 422);
+    vendors = list.length ? list.join(VENDOR_SEP) : null;
+  }
 
   // downtime rows drive the auto breakdown total (header value may override)
   await prisma.downtimeEntry.deleteMany({ where: { reportId: id } });
@@ -282,7 +313,7 @@ async function saveProduction(id: string, body: any, user: any) {
       dateAd: h.dateAd ? new Date(h.dateAd + 'T00:00:00') : undefined,
       dateBs: str(h.dateBs) ?? undefined,
       packagingHours: num(h.packagingHours),
-      vendors: str(h.vendors),
+      vendors,
       manpower: num(h.manpower),
       startTime: str(h.startTime), closeTime: str(h.closeTime),
       // auto = Σ downtime log; a ticked override keeps whatever the supervisor typed

@@ -47,11 +47,11 @@ export type QcFormData = {
   rows: QcTemplateRow[];
 };
 
-export function QcForm({ initial, canApprove, canUnlock, isManager, sapEnabled = false }: { initial: QcFormData; canApprove: boolean; canUnlock: boolean; isManager: boolean; sapEnabled?: boolean }) {
+export function QcForm({ initial, canApprove, canUnlock, canOverride, sapEnabled = false }: { initial: QcFormData; canApprove: boolean; canUnlock: boolean; canOverride: boolean; sapEnabled?: boolean }) {
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
   const editable = ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(initial.status);
-  const { saveState, notify, flushNow } = useAutosave(`/api/records/qc/${initial.id}`, editable);
+  const { saveState, saveError, notify, flushNow } = useAutosave(`/api/records/qc/${initial.id}`, editable);
 
   function snapshot(h = header, r = rows) {
     return {
@@ -96,7 +96,7 @@ export function QcForm({ initial, canApprove, canUnlock, isManager, sapEnabled =
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <WorkflowBar type="qc" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
-        <SaveIndicator state={saveState} />
+        <SaveIndicator state={saveState} error={saveError} />
       </div>
 
       <section className="rounded-xl border border-stone-200 bg-white p-4">
@@ -211,17 +211,17 @@ export function QcForm({ initial, canApprove, canUnlock, isManager, sapEnabled =
       <section className="rounded-xl border border-stone-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">Final status</h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <L label={`Overall result ${header.overallOverridden ? '(manager override)' : '(auto-suggested)'}`}>
+          <L label={`Overall result ${header.overallOverridden ? '(approver override)' : '(auto-suggested)'}`}>
             <div className="flex items-center gap-2">
               <select
                 className={`field ${shownOverall === 'PASS' ? 'cell-pass' : shownOverall === 'FAIL' ? 'cell-fail' : ''}`}
-                disabled={!editable || (!isManager && header.overallOverridden) || !header.overallOverridden}
+                disabled={!editable || (!canOverride && header.overallOverridden) || !header.overallOverridden}
                 value={shownOverall}
                 onChange={(e) => setH('overallResult', e.target.value)}
               >
                 <option value="">—</option><option value="PASS">PASS</option><option value="FAIL">FAIL</option>
               </select>
-              {isManager && editable && (
+              {canOverride && editable && (
                 <label className="flex items-center gap-1 whitespace-nowrap text-xs text-stone-500">
                   <input type="checkbox" checked={header.overallOverridden}
                     onChange={(e) => { const next = { ...header, overallOverridden: e.target.checked, overallResult: shownOverall }; setHeader(next); notify(snapshot(next)); }} />

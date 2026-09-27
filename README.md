@@ -58,23 +58,36 @@ every timestamp on screen, in prints and in emails shows Nepal time ("NPT").
   converts to kg from the pack size (350 × 50 kg bora = 17,500 kg, shown under the cell).
   **Semi-finished** is product still loose in bins (not packed yet) — never the packed
   weight again. Row total = semi-finished + packed kg. Total recovery = all output ÷ net
-  input; main-product yield excludes by-products. Net input = kanta − bora per line (a
+  input; main-product yield excludes by-products. Products typed **loss / dust** (Admin →
+  Master data; Roller "Dust" by default) are recorded below the totals and never counted in
+  total output or any % — like "Aspirator Dust" on the paper Maida report. Net input = kanta − bora per line (a
   bora heavier than its kanta blocks submit). Breakdown minutes = Σ downtime log unless the
   supervisor ticks *edit* and overrides (the override now survives reloads). Efficiency =
   (shift − breakdown) ÷ shift, clamped at 0.
+- **Vendor(s)** on a production report is picked from the supplier master (multi-select;
+  linking an intake lot adds its supplier). Old hand-typed text shows with ⚠ until removed.
+- **Intake lots on production** offer only what is left: lot weight − kanta weight already
+  linked by other reports (and by this report's other rows, live). Over-using a lot blocks
+  submit and approval.
 - **Yield warnings**: per-mill sanity bands (admin-editable) — e.g. Roller total recovery
   98–103%, Chiura main yield 60–70%. Soft warnings only, never blocking; submitting outside
   the band also emails the managers (event *Production yield outside the expected band*).
 - **Autosave**: forms save ~1.2 s after you stop typing; safe to walk away mid-entry.
 - **Digital sign-offs (no paper signatures)**: each user draws their signature once on
-  `/profile` (mouse/finger/stylus — works on the gate tablet). Submitting a report signs the
-  submitter's slot automatically, Approve signs the manager slot, and co-signers (godown
-  keeper on intake) sign with one tap on the record's *Digital sign-offs* panel. Every
+  `/profile` (mouse/finger/stylus — works on the gate tablet). Sign-off slots (Godown Keeper,
+  Quality Controller, Checked by, Prepared by) are master data in Admin → Approval flow, each
+  bound to a role — only users with that role get the "Sign as …" button, and the API refuses
+  anyone else (Admin included). Submitting signs the submitter's own slot automatically,
+  Approve signs the approval slot, and other role-holders co-sign with one tap on the record's
+  *Digital sign-offs* panel. Every
   signature stores a point-in-time image snapshot + name + timestamp, writes an audit row,
   and *unlocking voids all signatures* — after edits, everyone signs again. While a report is
   still editable a signer can **remove their own signature** (Manager/Admin: anyone's) from the
   sign-off panel and sign again — audited as UNSIGN. Approval signatures are only undone by
   Reject/Unlock. On `/profile` a signature can be replaced or removed at any time.
+- **Intake Decision** (Accepted / with deduction / Rejected) and deductions are set only by the
+  approver of the current step (or a Manager/Admin), enforced in the API; submitting doesn't
+  need one, approving does. Likewise only a Manager/Admin can override a QC sheet's PASS/FAIL.
 - **Printing**: every report has a paper-style print view (`/print/<type>/<id>`) — use the
   browser's Print → Save as PDF. Prints show the digital signature images with
   "Digitally signed <time> NPT" — nothing left to sign by hand.
@@ -178,6 +191,11 @@ src/components/           the three big client forms, charts, shell, sign-off pa
 
 ## Notes
 
+- One-time master-data corrections live in `src/lib/data-fixes.ts` and run once at server
+  start (`src/instrumentation.ts`); each is recorded as a `datafix.*` Setting row + audit row,
+  so a later admin change in the UI is never overwritten. Current ones (Sep 2026 plant review):
+  Roller "Dust" → loss, IR column on First Break Moisture, Granularity <118µ record-only.
+- Dates: every timestamp shown (sign-offs, audit, emails, prints) carries the Miti too.
 - Timezone is Asia/Kathmandu (GMT+5:45) for everything — `next.config.mjs` sets `process.env.TZ`;
   the workers set it too. Calendar dates are stored as local midnight.
 - To reset to demo data: `rm prisma/dev.db && npm run setup:demo`. To wipe real test data but

@@ -90,6 +90,14 @@ export function packedTotalKg(packedKg: Record<string, number>): number {
   return Object.values(packedKg).reduce((a, b) => a + (b || 0), 0);
 }
 
+// Product kinds: PRODUCT (main — counts toward main-product yield), BYPRODUCT
+// (counts toward total output), LOSS (recorded but outside the output and
+// every %, like "Aspirator Dust" on the paper Maida report).
+export const PRODUCT_KINDS = { PRODUCT: 'Main product', BYPRODUCT: 'By-product', LOSS: 'Loss / dust — not counted in output' } as const;
+export function countsInOutput(kind: string): boolean {
+  return kind !== 'LOSS';
+}
+
 // Production row total = semi-finished (loose) + Σ packed kg
 export function rowTotalKg(semiFinishedKg: number | null | undefined, packedKg: Record<string, number>): number {
   return (semiFinishedKg || 0) + packedTotalKg(packedKg);
@@ -103,6 +111,19 @@ export function parsePacked(json?: string | null): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+// ---------- Intake lots consumed by production ----------
+// A lot's weight is its weighbridge (kanta) weight at intake, so a production
+// line consumes its kanta weight from the linked lot (net if kanta is blank).
+export function lotConsumedKg(input: { kantaKg: number | null | undefined; netKg?: number | null | undefined }): number {
+  return input.kantaKg ?? input.netKg ?? 0;
+}
+
+// Vendor(s) on a production report: supplier-master names, stored "; "-joined
+export const VENDOR_SEP = '; ';
+export function parseVendors(v: string | null | undefined): string[] {
+  return (v ?? '').split(';').map((x) => x.trim()).filter(Boolean);
 }
 
 // Net input of one raw-material line: kanta (gross) − bora (tare). A tare

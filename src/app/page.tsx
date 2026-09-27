@@ -5,8 +5,7 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { Card, PassFailBadge, DualDate } from '@/components/ui';
 import { LineChart, ParetoBars, StatTile } from '@/components/charts';
-import { canApprove } from '@/lib/constants';
-import { adIso, todayKathmandu, addDays } from '@/lib/dates';
+import { adIso, adToBs, formatMiti, mitiShort, todayKathmandu, addDays } from '@/lib/dates';
 import { parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from '@/lib/calc';
 import { approveRecord, WorkflowError } from '@/lib/workflow';
 import { canApproveNow } from '@/lib/approval';
@@ -74,7 +73,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
       orderBy: { report: { dateAd: 'asc' } },
       take: 60,
     });
-    trendPoints = results.map((r) => ({ label: adIso(r.report.dateAd).slice(5), value: r.resultNum! }));
+    trendPoints = results.map((r) => ({ label: mitiShort(adIso(r.report.dateAd)), value: r.resultNum! }));
     const spec = await prisma.specVersion.findFirst({ where: { parameterId: trendParam.id }, orderBy: { version: 'desc' } });
     specMin = spec?.min ?? null;
     specMax = spec?.max ?? null;
@@ -91,14 +90,14 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
     .map((r) => {
       const net = r.inputs.reduce((a, i) => a + (i.netKg ?? 0), 0);
       const main = r.rows.filter((x) => x.product.kind === 'PRODUCT').reduce((a, x) => a + rowTotalKg(x.semiFinishedKg, parsePacked(x.packedKg)), 0);
-      return net ? { label: adIso(r.dateAd).slice(5), value: round2((main / net) * 100) } : null;
+      return net ? { label: mitiShort(adIso(r.dateAd)), value: round2((main / net) * 100) } : null;
     })
     .filter(Boolean) as { label: string; value: number }[];
   const effPoints = prodReports
     .map((r) => {
       const sm = shiftMinutes(r.startTime, r.closeTime);
       const e = efficiencyPct(sm, r.breakdownMin ?? 0);
-      return e !== null ? { label: adIso(r.dateAd).slice(5), value: e } : null;
+      return e !== null ? { label: mitiShort(adIso(r.dateAd)), value: e } : null;
     })
     .filter(Boolean) as { label: string; value: number }[];
 
@@ -133,7 +132,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
   }
   const scorecard = [...bySupplier.values()].sort((a, b) => b.lots - a.lots);
 
-  const isManager = canApprove(user.role);
+  const isApprover = approvable.size > 0;
   const qs = (patch: Record<string, string>) => {
     const p = new URLSearchParams({ from, to, mill: millFilter, tp: trendProduct?.id ?? '', pp: trendParam?.id ?? '', ...patch });
     return `/?${p.toString()}`;
@@ -148,8 +147,8 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
         </div>
         <form className="flex flex-wrap items-end gap-2 text-sm" method="get">
           <label>Mill<br /><select name="mill" defaultValue={millFilter} className="field w-40"><option value="">All mills</option>{mills.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-          <label>From<br /><input type="date" name="from" defaultValue={from} className="field w-36" /></label>
-          <label>To<br /><input type="date" name="to" defaultValue={to} className="field w-36" /></label>
+          <label>From<br /><input type="date" name="from" defaultValue={from} className="field w-36" /><br /><span className="text-xs text-stone-500">Miti {formatMiti(adToBs(from))}</span></label>
+          <label>To<br /><input type="date" name="to" defaultValue={to} className="field w-36" /><br /><span className="text-xs text-stone-500">Miti {formatMiti(adToBs(to))}</span></label>
           <button className="btn-secondary">Apply</button>
         </form>
       </div>
@@ -169,10 +168,13 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">Intake</span>
                 <Link href={`/intake/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link>
                 <span>{r.material.name} · {r.supplier?.name ?? 'no supplier'}</span>
+                <span className="text-xs text-stone-500"><DualDate ad={r.dateAd} bs={r.dateBs} /></span>
                 <span className="flex-1" />
-                {approvable.has(r.id) && (
+                {approvable.has(r.id) && (r.decision ? (
                   <form action={quickApprove}><input type="hidden" name="type" value="intake" /><input type="hidden" name="id" value={r.id} /><button className="btn-primary">Approve</button></form>
-                )}
+                ) : (
+                  <Link href={`/intake/${r.id}`} className="btn-secondary">Open to set Decision</Link>
+                ))}
               </li>
             ))}
             {pendingQc.map((r) => (
@@ -180,6 +182,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">QC</span>
                 <Link href={`/qc/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link>
                 <span>{r.batch.mill.name} · {r.product.name} · {r.batch.batchNo}</span>
+                <span className="text-xs text-stone-500"><DualDate ad={r.dateAd} bs={r.dateBs} /></span>
                 <PassFailBadge result={r.overallResult} />
                 <span className="flex-1" />
                 {approvable.has(r.id) && (
@@ -192,6 +195,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
                 <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">Production</span>
                 <Link href={`/production/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link>
                 <span>{r.mill.name} · {r.batch.batchNo}</span>
+                <span className="text-xs text-stone-500"><DualDate ad={r.dateAd} bs={r.dateBs} /></span>
                 <span className="flex-1" />
                 {approvable.has(r.id) && (
                   <form action={quickApprove}><input type="hidden" name="type" value="production" /><input type="hidden" name="id" value={r.id} /><button className="btn-primary">Approve</button></form>
@@ -199,13 +203,13 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
               </li>
             ))}
           </ul>
-          {!isManager && approvable.size === 0 && <p className="mt-2 text-xs text-stone-400">Nothing here is waiting on your role — this list is read-only for you.</p>}
-          {isManager && <p className="mt-2 text-xs text-stone-400">Approve here signs the approval slot exactly like the button on the record page. Open the record to reject with a reason.</p>}
+          {!isApprover && <p className="mt-2 text-xs text-stone-400">Nothing here is waiting on your role — this list is read-only for you.</p>}
+          {isApprover && <p className="mt-2 text-xs text-stone-400">Approve here signs the approval slot exactly like the button on the record page. Open the record to reject with a reason.</p>}
         </Card>
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card title={`Parameter trend — ${trendProduct?.name ?? ''}: ${trendParam?.name ?? ''}`}>
+        <Card title={`Parameter trend — ${trendProduct?.name ?? ''}: ${trendParam?.name ?? ''} (dates in Miti)`}>
           <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
             {productsWithQc.slice(0, 8).map((p) => (
               <Link key={p.id} href={qs({ tp: p.id, pp: '' })} className={`rounded-full border px-2 py-0.5 ${p.id === trendProduct?.id ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-stone-200 text-stone-500 hover:bg-stone-50'}`}>{p.name}</Link>
@@ -224,11 +228,11 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
           <ParetoBars items={pareto} />
         </Card>
 
-        <Card title="Main-product yield % per production day">
+        <Card title="Main-product yield % per production day (dates in Miti)">
           <LineChart points={yieldPoints} unit="%" />
         </Card>
 
-        <Card title="Shift efficiency % (production time ÷ shift time)">
+        <Card title="Shift efficiency % (production time ÷ shift time, dates in Miti)">
           <LineChart points={effPoints} unit="%" />
         </Card>
       </div>

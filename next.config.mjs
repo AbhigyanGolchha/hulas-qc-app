@@ -7,6 +7,8 @@ process.env.TZ = 'Asia/Kathmandu';
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // src/instrumentation.ts applies one-time data fixes at server start
+  experimental: { instrumentationHook: true },
 };
 
 export default nextConfig;

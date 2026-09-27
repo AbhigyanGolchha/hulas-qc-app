@@ -7,8 +7,7 @@ import { PageTitle } from '@/components/ui';
 import { QcForm, type QcFormData } from '@/components/qc-form';
 import { SignoffPanel } from '@/components/signoff-panel';
 import { slotViews } from '@/lib/sign';
-import { canApprove, canUnlock } from '@/lib/constants';
-import { canApproveNow } from '@/lib/approval';
+import { canApproveNow, canSetDecision, canUnlockNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
 import { isSapEnabled } from '@/lib/connector';
 
@@ -33,7 +32,7 @@ export default async function QcPage({ params }: { params: { id: string } }) {
       include: { product: true },
       orderBy: { product: { sortOrder: 'asc' } },
     }),
-    slotViews('qc', params.id),
+    slotViews('qc', params.id, user.role),
     prisma.user.findUnique({ where: { id: user.id }, select: { signatureData: true } }),
   ]);
 
@@ -102,9 +101,9 @@ export default async function QcPage({ params }: { params: { id: string } }) {
           <Link href={`/qc/new?batch=${r.batchId}`} className="rounded-t px-3 py-1.5 text-stone-400 hover:bg-stone-100">+ add product</Link>
         </div>
       )}
-      <QcForm initial={initial} canApprove={canApprove(user.role)} canUnlock={canUnlock(user.role)} isManager={canApprove(user.role)} sapEnabled={await isSapEnabled()} />
+      <QcForm initial={initial} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} canUnlock={await canUnlockNow('qc', user.role)} canOverride={await canSetDecision('qc', r, user.role)} sapEnabled={await isSapEnabled()} />
       <div className="mt-5">
-        <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
+        <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={await canUnlockNow('qc', user.role)} />
       </div>
     </Shell>
   );

@@ -54,12 +54,8 @@ export const DOWNTIME_DEPARTMENTS = ['Product In', 'Product Out', 'Electrical', 
 
 export const UNLOADING_PLACES = ['Maida Intake', 'Chakki Mill Godown', 'Chiura Mill Godown', 'Bhuja Mill Godown', 'Main Godown'];
 
-export function canApprove(role: string) {
-  return role === 'MANAGER' || role === 'ADMIN';
-}
-export function canUnlock(role: string) {
-  return role === 'MANAGER' || role === 'ADMIN';
-}
+// Who may approve, unlock, decide or override is NOT decided here — it all
+// comes from the approval matrix (src/lib/approval.ts, Admin → Approval matrix).
 export function isAdmin(role: string) {
   return role === 'ADMIN';
 }

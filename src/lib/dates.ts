@@ -73,9 +73,10 @@ export function nowKathmandu(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: NEPAL_TZ }));
 }
 
-// Timestamp for humans, always in Nepal time: "16 Apr 2026, 22:05 NPT".
-// Accepts a Date or ISO string; safe to call on server and client.
-export function fmtNpt(d: Date | string | null | undefined, opts: { seconds?: boolean; suffix?: boolean } = {}): string {
+// Timestamp for humans, always in Nepal time, with the Miti alongside:
+// "16 Apr 2026, 22:05 NPT · Miti 3-1-2083". Accepts a Date or ISO string;
+// safe to call on server and client. { miti: false } drops the BS part.
+export function fmtNpt(d: Date | string | null | undefined, opts: { seconds?: boolean; suffix?: boolean; miti?: boolean } = {}): string {
   if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   if (Number.isNaN(date.getTime())) return '—';
@@ -84,7 +85,21 @@ export function fmtNpt(d: Date | string | null | undefined, opts: { seconds?: bo
     day: 'numeric', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit', ...(opts.seconds ? { second: '2-digit' } : {}),
   });
-  return opts.suffix === false ? s : `${s} NPT`;
+  const withSuffix = opts.suffix === false ? s : `${s} NPT`;
+  return opts.miti === false ? withSuffix : `${withSuffix} · Miti ${formatMiti(adToBs(nptDateIso(date)))}`;
+}
+
+// The Nepal calendar day (AD, "YYYY-MM-DD") an instant falls on
+export function nptDateIso(d: Date): string {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: NEPAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+// Short Miti label for chart axes: "31-5" (day-month, like the paper forms)
+export function mitiShort(adIsoStr: string): string {
+  const [, m, d] = adToBs(adIsoStr).split('-').map(Number);
+  return m && d ? `${d}-${m}` : adIsoStr.slice(5);
 }
 
 // Compact machine-ish form for logs and file names: "2026-04-16 22:05" (Nepal time)
