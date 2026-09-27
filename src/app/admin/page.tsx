@@ -6,6 +6,7 @@ import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { getMailConfig, isMailConfigured } from '@/lib/mail';
 import { isSapEnabled } from '@/lib/connector';
+import { openResetRequests } from '@/lib/password-reset';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,8 +23,9 @@ export default async function AdminHome() {
     getMailConfig(),
     isSapEnabled(),
   ]);
+  const resetAsks = (await openResetRequests()).size;
   const items = [
-    { href: '/admin/users', title: 'Users & sign-in', desc: `${users} active accounts. Create accounts, reset passwords, deactivate leavers. (Admin only)` },
+    { href: '/admin/users', title: 'Users & sign-in', desc: `${resetAsks ? `⚠ ${resetAsks} waiting for a password reset · ` : ''}${users} active accounts. Create accounts, reset passwords, deactivate leavers. (Admin only)` },
     { href: '/admin/notifications', title: 'Notifications (email)', desc: `${isMailConfigured(mailCfg) ? 'Email is ON' : 'Email is OFF — set up SMTP'}${mailFailed ? ` · ${mailFailed} failed` : ''}. Who gets told about submits, approvals, rejections, QC fails, yield warnings.` },
     { href: '/admin/specs', title: 'Parameters & spec limits', desc: `${params} parameters across all templates. Edits are versioned — old reports keep the spec in force when tested.` },
     { href: '/admin/master', title: 'Master data', desc: `Mills & yield bands, products & shelf life, suppliers (${suppliers}), pack sizes.` },

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getSessionUser, loginWithPassword, setSessionCookie } from '@/lib/auth';
 
@@ -19,12 +20,12 @@ async function login(formData: FormData) {
   redirect(r.mustChangePassword ? '/profile/password?first=1' : safeNext);
 }
 
-export default async function LoginPage({ searchParams }: { searchParams: { error?: string; locked?: string; inactive?: string; u?: string; next?: string; out?: string } }) {
+export default async function LoginPage({ searchParams }: { searchParams: { error?: string; locked?: string; inactive?: string; u?: string; next?: string; out?: string; reset?: string } }) {
   const user = await getSessionUser();
   const next = searchParams.next && searchParams.next.startsWith('/') && !searchParams.next.startsWith('//') ? searchParams.next : '/';
   // already signed in (e.g. a stale link to /login): go where they were heading
   if (user) redirect(user.mustChangePassword ? '/profile/password?first=1' : next);
-  const bounced = Boolean(searchParams.next) && !searchParams.error && !searchParams.locked && !searchParams.inactive && !searchParams.out;
+  const bounced = Boolean(searchParams.next) && !searchParams.error && !searchParams.locked && !searchParams.inactive && !searchParams.out && !searchParams.reset;
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <form action={login} className="w-full max-w-sm space-y-4 rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
@@ -34,6 +35,9 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
         </div>
         {searchParams.out && (
           <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">You have been signed out.</div>
+        )}
+        {searchParams.reset && (
+          <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">Password changed. Sign in with your new password.</div>
         )}
         {bounced && (
           <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -47,7 +51,7 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
         )}
         {searchParams.locked && (
           <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            Too many wrong attempts. This account is locked for about {searchParams.locked} minute{searchParams.locked === '1' ? '' : 's'}. An Admin can reset your password if you have forgotten it.
+            Too many wrong attempts. This account is locked for about {searchParams.locked} minute{searchParams.locked === '1' ? '' : 's'}. If you have forgotten it, use <Link href="/forgot-password" className="font-medium underline">Forgot password?</Link> below.
           </div>
         )}
         {searchParams.inactive && (
@@ -64,9 +68,12 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
           <span className="mb-1 block font-medium text-stone-700">Password</span>
           <input name="password" type="password" required autoComplete="current-password" className="field" />
         </label>
+        <div className="-mt-2 text-right text-sm">
+          <Link href="/forgot-password" className="text-brand-700 hover:underline">Forgot password?</Link>
+        </div>
         <button type="submit" className="btn-primary w-full justify-center">Sign in</button>
         <p className="text-center text-xs text-stone-400">
-          No account or forgot your password? Ask the Admin — they create accounts and reset passwords in Admin → Users.
+          No account yet? Ask the Admin — accounts are created in Admin → Users.
         </p>
       </form>
     </main>
