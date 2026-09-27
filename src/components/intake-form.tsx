@@ -59,6 +59,8 @@ export function IntakeForm({
   canDecide,
   decider,
   sapEnabled = false,
+  canDelete = false,
+  canSubmit = true,
 }: {
   initial: IntakeFormData;
   mills: { id: string; name: string }[];
@@ -68,6 +70,8 @@ export function IntakeForm({
   canDecide: boolean; // approver of the step it is waiting on (approval matrix) — only they set the Decision
   decider: string; // who does, in words, for everyone else
   sapEnabled?: boolean;
+  canDelete?: boolean;
+  canSubmit?: boolean;
 }) {
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
@@ -111,7 +115,7 @@ export function IntakeForm({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <WorkflowBar type="intake" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
+        <WorkflowBar type="intake" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} canDelete={canDelete} canSubmit={canSubmit} />
         <SaveIndicator state={saveState} error={saveError} />
       </div>
 

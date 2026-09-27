@@ -85,7 +85,7 @@ export default async function QcPage({ params }: { params: { id: string } }) {
       <PageTitle
         title={`${r.product.name} — ${r.reportNo}`}
         subtitle={<>
-          Hulas Khadya Udyog · {r.batch.mill.name} · Batch{' '}
+          Hulas Khadya Udhyog · {r.batch.mill.name} · Batch{' '}
           <Link href={`/batches/${r.batchId}`} className="text-brand-700 hover:underline">{r.batch.batchNo}</Link>
           {' '}· {adIso(r.dateAd)} · Miti {formatMiti(r.dateBs)}
         </>}
@@ -101,7 +101,7 @@ export default async function QcPage({ params }: { params: { id: string } }) {
           <Link href={`/qc/new?batch=${r.batchId}`} className="rounded-t px-3 py-1.5 text-stone-400 hover:bg-stone-100">+ add product</Link>
         </div>
       )}
-      <QcForm initial={initial} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} canUnlock={await canUnlockNow('qc', user.role)} canOverride={await canSetDecision('qc', r, user.role)} sapEnabled={await isSapEnabled()} />
+      <QcForm initial={initial} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} canUnlock={await canUnlockNow('qc', user.role)} canOverride={await canSetDecision('qc', r, user.role)} sapEnabled={await isSapEnabled()} canDelete={user.permissions.includes('reports.delete')} canSubmit={user.permissions.includes('qc.edit')} />
       <div className="mt-5">
         <SignoffPanel type="qc" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('qc', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={await canUnlockNow('qc', user.role)} />
       </div>

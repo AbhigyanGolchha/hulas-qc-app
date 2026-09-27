@@ -13,7 +13,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import { prisma } from './db';
 import { enqueueMail, getMailConfig, isMailConfigured } from './mail';
-import { hashPassword, passwordProblem } from './auth';
+import { hashPassword, passwordProblem, ipField } from './auth';
 
 const SECRET = process.env.SESSION_SECRET || 'hulas-dev-secret';
 export const RESET_MINUTES = 30;
@@ -59,13 +59,13 @@ export async function requestPasswordReset(identifier: string, baseUrl: string):
   if (!id) return;
   const user = await prisma.user.findFirst({ where: { active: true, OR: [{ username: id }, { email: id }] } });
   if (!user) {
-    await prisma.auditLog.create({ data: { userName: id, recordType: 'AUTH', recordId: id, action: RESET_REQUESTED, newValue: 'no active account with that username/email — nothing sent' } });
+    await prisma.auditLog.create({ data: { userName: id, recordType: 'AUTH', field: ipField(), recordId: id, action: RESET_REQUESTED, newValue: 'no active account with that username/email — nothing sent' } });
     return;
   }
 
   // one request per account per few minutes — later ones are ignored quietly
   const recent = await prisma.auditLog.findFirst({
-    where: { recordType: 'AUTH', recordId: user.id, action: RESET_REQUESTED, at: { gt: new Date(Date.now() - COOLDOWN_MINUTES * 60000) } },
+    where: { recordType: 'AUTH', field: ipField(), recordId: user.id, action: RESET_REQUESTED, at: { gt: new Date(Date.now() - COOLDOWN_MINUTES * 60000) } },
   });
   if (recent) return;
 
@@ -90,13 +90,13 @@ export async function requestPasswordReset(identifier: string, baseUrl: string):
   <p style="color:#57534e">The link works once and expires in ${RESET_MINUTES} minutes. If you did not ask for this, ignore this email — your password stays as it is.</p>
 </div>`;
     await enqueueMail({ event: 'PASSWORD_RESET_LINK', userId: user.id, toEmail: user.email, toName: user.name, subject: '[Hulas QC] Reset your password', bodyText: text, bodyHtml: html });
-    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: RESET_REQUESTED, newValue: `reset link emailed to ${user.email}` } });
+    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: RESET_REQUESTED, newValue: `reset link emailed to ${user.email}` } });
     return;
   }
 
   // no way to reach them directly — hand it to the Admins
   await prisma.auditLog.create({
-    data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: RESET_REQUESTED, newValue: user.email ? 'email is switched off — Admin asked to reset' : 'no email on the account — Admin asked to reset' },
+    data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: RESET_REQUESTED, newValue: user.email ? 'email is switched off — Admin asked to reset' : 'no email on the account — Admin asked to reset' },
   });
   const admins = await prisma.user.findMany({ where: { role: 'ADMIN', active: true, email: { not: null }, id: { not: user.id } } });
   for (const a of admins) {
@@ -115,7 +115,7 @@ export async function requestPasswordReset(identifier: string, baseUrl: string):
 export async function openResetRequests(): Promise<Map<string, Date>> {
   const since = new Date(Date.now() - 14 * 24 * 3600 * 1000);
   const rows = await prisma.auditLog.findMany({
-    where: { recordType: 'AUTH', at: { gt: since }, action: { in: [RESET_REQUESTED, ...RESOLVED] }, userId: { not: null } },
+    where: { recordType: 'AUTH', field: ipField(), at: { gt: since }, action: { in: [RESET_REQUESTED, ...RESOLVED] }, userId: { not: null } },
     orderBy: { at: 'asc' },
   });
   const open = new Map<string, Date>();
@@ -138,6 +138,6 @@ export async function completePasswordReset(token: string, pw: string, pw2: stri
     where: { id: user.id },
     data: { passwordHash: hashPassword(pw), mustChangePassword: false, failedLogins: 0, lockedUntil: null },
   });
-  await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: 'PASSWORD_RESET_SELF', newValue: 'new password set via emailed reset link' } });
+  await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: 'PASSWORD_RESET_SELF', newValue: 'new password set via emailed reset link' } });
   return null;
 }

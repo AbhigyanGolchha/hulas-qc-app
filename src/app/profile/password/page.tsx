@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser, verifyPassword, hashPassword, passwordProblem, MIN_PASSWORD } from '@/lib/auth';
+import { requireUser, verifyPassword, hashPassword, passwordProblem, MIN_PASSWORD, ipField } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
@@ -22,7 +22,7 @@ async function changePassword(formData: FormData) {
   if (problem) back(problem);
   if (verifyPassword(pw, db.passwordHash)) back('The new password must be different from the current one.');
   await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hashPassword(pw), mustChangePassword: false, failedLogins: 0, lockedUntil: null } });
-  await logAudit(user, 'AUTH', user.id, 'PASSWORD_CHANGED');
+  await logAudit(user, 'AUTH', user.id, 'PASSWORD_CHANGED', ipField() ?? undefined);
   redirect('/profile?ok=1');
 }
 

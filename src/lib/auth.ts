@@ -6,6 +6,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { prisma } from './db';
+import { getRoles, type Permission } from './roles';
 
 const COOKIE = 'hulas_session';
 const SECRET = process.env.SESSION_SECRET || 'hulas-dev-secret';
@@ -66,6 +67,39 @@ export function parseSessionToken(token: string | undefined): string | null {
   return userId;
 }
 
+// The address a request came from, for the audit log (sign-ins etc). Behind a
+// proxy, x-forwarded-for's first entry; with plain `next start` on the LAN,
+// Next.js fills x-forwarded-for from the socket itself.
+export function clientIp(): string | null {
+  try {
+    const h = headers();
+    const raw = (h.get('x-forwarded-for') ?? '').split(',')[0].trim() || h.get('x-real-ip') || '';
+    const ip = raw.replace(/^::ffff:/, '');
+    return ip ? (ip === '::1' ? '127.0.0.1' : ip) : null;
+  } catch {
+    return null;
+  }
+}
+
+// the address the person is using right now (http://192.168.1.203:3000 on the
+// LAN) — for links in emails they trigger
+export function requestBaseUrl(): string | undefined {
+  try {
+    const h = headers();
+    const host = h.get('x-forwarded-host') ?? h.get('host');
+    if (!host) return undefined;
+    return `${(h.get('x-forwarded-proto') ?? 'http').split(',')[0].trim()}://${host}`;
+  } catch {
+    return undefined;
+  }
+}
+
+// stored in AuditLog.field for sign-in rows as "ip:<address>"
+export function ipField(): string | null {
+  const ip = clientIp();
+  return ip ? `ip:${ip}` : null;
+}
+
 export type SessionUser = {
   id: string;
   username: string;
@@ -74,6 +108,8 @@ export type SessionUser = {
   role: string;
   millId: string | null;
   mustChangePassword: boolean;
+  roleLabel: string; // from Admin → Roles & permissions
+  permissions: string[]; // what this user's role may do (Admin → Roles & permissions)
 };
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -82,7 +118,11 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!userId) return null;
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user || !user.active) return null;
-  return { id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, millId: user.millId, mustChangePassword: user.mustChangePassword };
+  const role = (await getRoles()).find((r) => r.key === user.role);
+  return {
+    id: user.id, username: user.username, name: user.name, email: user.email, role: user.role, millId: user.millId,
+    mustChangePassword: user.mustChangePassword, roleLabel: role?.label ?? user.role, permissions: role?.permissions ?? [],
+  };
 }
 
 // Every page calls this. A user flagged mustChangePassword can't go anywhere
@@ -135,16 +175,16 @@ export async function loginWithPassword(usernameRaw: string, password: string): 
   const username = usernameRaw.trim().toLowerCase();
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user) {
-    await prisma.auditLog.create({ data: { userName: username || '?', recordType: 'AUTH', recordId: username || '?', action: 'LOGIN_FAILED', newValue: 'unknown username' } });
+    await prisma.auditLog.create({ data: { userName: username || '?', recordType: 'AUTH', field: ipField(), recordId: username || '?', action: 'LOGIN_FAILED', newValue: 'unknown username' } });
     return { ok: false, reason: 'bad' };
   }
   if (!user.active) {
-    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: 'LOGIN_FAILED', newValue: 'account deactivated' } });
+    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: 'LOGIN_FAILED', newValue: 'account deactivated' } });
     return { ok: false, reason: 'inactive' };
   }
   if (user.lockedUntil && user.lockedUntil > new Date()) {
     const minutesLeft = Math.max(1, Math.ceil((user.lockedUntil.getTime() - Date.now()) / 60000));
-    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: 'LOGIN_FAILED', newValue: `locked, ${minutesLeft} min left` } });
+    await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: 'LOGIN_FAILED', newValue: `locked, ${minutesLeft} min left` } });
     return { ok: false, reason: 'locked', minutesLeft };
   }
   if (!verifyPassword(password, user.passwordHash)) {
@@ -155,11 +195,20 @@ export async function loginWithPassword(usernameRaw: string, password: string): 
       data: { failedLogins: lock ? 0 : failed, lockedUntil: lock ? new Date(Date.now() + LOCK_MINUTES * 60000) : null },
     });
     await prisma.auditLog.create({
-      data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: 'LOGIN_FAILED', newValue: lock ? `wrong password ×${MAX_FAILED} — locked ${LOCK_MINUTES} min` : `wrong password (${failed}/${MAX_FAILED})` },
+      data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: 'LOGIN_FAILED', newValue: lock ? `wrong password ×${MAX_FAILED} — locked ${LOCK_MINUTES} min` : `wrong password (${failed}/${MAX_FAILED})` },
     });
     return lock ? { ok: false, reason: 'locked', minutesLeft: LOCK_MINUTES } : { ok: false, reason: 'bad' };
   }
   await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() } });
-  await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', recordId: user.id, action: 'LOGIN' } });
+  await prisma.auditLog.create({ data: { userId: user.id, userName: user.name, recordType: 'AUTH', field: ipField(), recordId: user.id, action: 'LOGIN' } });
   return { ok: true, userId: user.id, mustChangePassword: user.mustChangePassword };
+}
+
+// For pages and server actions that need one permission (Admin → Roles &
+// permissions). Without it the user is sent home — the link isn't shown to
+// them either, so this only catches typed URLs and stale tabs.
+export async function requirePermission(perm: Permission): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!user.permissions.includes(perm)) redirect(perm.startsWith('admin.') && user.permissions.includes('admin.panel') ? '/admin' : '/');
+  return user;
 }

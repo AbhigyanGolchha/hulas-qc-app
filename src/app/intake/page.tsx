@@ -1,14 +1,26 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import { requireUser, requirePermission } from '@/lib/auth';
+import { deleteReports } from '@/lib/delete-reports';
+import { SelectAll, BulkDeleteButton } from '@/components/bulk-select';
 import { Shell } from '@/components/shell';
 import { PageTitle, StatusBadge, DualDate } from '@/components/ui';
 import { DECISIONS, type Decision } from '@/lib/constants';
 
 export const dynamic = 'force-dynamic';
 
+// Admin-only (the "Delete reports" permission): delete the ticked reports.
+async function massDelete(formData: FormData) {
+  'use server';
+  const user = await requirePermission('reports.delete');
+  const n = await deleteReports(user, 'intake', formData.getAll('ids').map(String));
+  redirect(`/intake?deleted=${n}`);
+}
+
 export default async function IntakeList({ searchParams }: { searchParams: Record<string, string> }) {
   const user = await requireUser();
+  const canDelete = user.permissions.includes('reports.delete');
   const { material, status, supplier, from, to } = searchParams;
 
   const where: any = {};
@@ -34,8 +46,11 @@ export default async function IntakeList({ searchParams }: { searchParams: Recor
     <Shell user={user} active="/intake">
       <PageTitle title="Raw Material Intake — Spot Analysis" subtitle="One report per incoming vehicle/lot, tested at the gate.">
         <a className="btn-secondary" href={`/api/csv?${csvQs}`}>Export CSV</a>
-        <Link className="btn-primary" href="/intake/new">+ New spot analysis</Link>
+        {user.permissions.includes('intake.edit') && (<Link className="btn-primary" href="/intake/new">+ New spot analysis</Link>)}
+        {canDelete && <BulkDeleteButton formId="bulk-delete" noun="report" />}
       </PageTitle>
+      {canDelete && <form id="bulk-delete" action={massDelete} className="hidden" />}
+      {searchParams.deleted && <div className="mb-3 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">{searchParams.deleted} report(s) deleted. The audit log keeps a record of each deletion.</div>}
 
       <form className="mb-4 flex flex-wrap items-end gap-2 text-sm" method="get">
         <label>Material<br /><select name="material" defaultValue={material ?? ''} className="field w-36"><option value="">All</option>{materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
@@ -50,6 +65,7 @@ export default async function IntakeList({ searchParams }: { searchParams: Recor
         <table className="w-full text-sm">
           <thead className="bg-stone-50 text-left text-xs uppercase text-stone-500">
             <tr>
+              {canDelete && <th className="w-8 px-3 py-2"><SelectAll formId="bulk-delete" /></th>}
               <th className="px-3 py-2">Report</th>
               <th className="px-3 py-2">Date</th>
               <th className="px-3 py-2">Material</th>
@@ -63,6 +79,7 @@ export default async function IntakeList({ searchParams }: { searchParams: Recor
           <tbody>
             {reports.map((r) => (
               <tr key={r.id} className="border-t border-stone-100 hover:bg-stone-50">
+                {canDelete && <td className="px-3 py-2"><input type="checkbox" name="ids" value={r.id} form="bulk-delete" aria-label={`Select ${r.reportNo}`} /></td>}
                 <td className="px-3 py-2"><Link href={`/intake/${r.id}`} className="font-medium text-brand-700 hover:underline">{r.reportNo}</Link></td>
                 <td className="px-3 py-2"><DualDate ad={r.dateAd} bs={r.dateBs} /></td>
                 <td className="px-3 py-2">{r.material.name}{r.variety ? ` — ${r.variety}` : ''}</td>

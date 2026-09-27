@@ -89,7 +89,7 @@ async function main() {
 
   // ---------- Settings ----------
   const settings: Record<string, string> = {
-    'company.name': 'Hulas Khadya Udyog Pvt. Ltd.',
+    'company.name': 'Hulas Khadya Udhyog Ltd.',
     'company.location': 'Nepalgunj, Nepal',
     'numbering.INTAKE': 'SA-{BSYEAR}-{SEQ4}',
     'numbering.QC': 'QC-{BSYEAR}-{SEQ4}',

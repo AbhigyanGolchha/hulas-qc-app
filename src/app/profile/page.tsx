@@ -6,7 +6,6 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { ProfileSignature } from './profile-signature';
-import { ROLE_LABELS, type Role } from '@/lib/constants';
 import { logAudit } from '@/lib/audit';
 import { EVENTS, parsePrefs, type EventKey } from '@/lib/notify';
 import { fmtNpt } from '@/lib/dates';
@@ -35,7 +34,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: { ok
     <Shell user={user} active="/profile">
       <PageTitle
         title="My profile"
-        subtitle={`${user.name} · ${ROLE_LABELS[user.role as Role] ?? user.role}${dbUser.mill ? ' · ' + dbUser.mill.name : ''} · username ${user.username}`}
+        subtitle={`${user.name} · ${user.roleLabel}${dbUser.mill ? ' · ' + dbUser.mill.name : ''} · username ${user.username}`}
       >
         <Link className="btn-secondary" href="/profile/password">Change password</Link>
       </PageTitle>
@@ -78,7 +77,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: { ok
         <Card title="Account">
           <dl className="grid grid-cols-2 gap-y-1 text-sm">
             <dt className="text-stone-500">Username</dt><dd><code>{user.username}</code></dd>
-            <dt className="text-stone-500">Role</dt><dd>{ROLE_LABELS[user.role as Role] ?? user.role}</dd>
+            <dt className="text-stone-500">Role</dt><dd>{user.roleLabel}</dd>
             <dt className="text-stone-500">Mill</dt><dd>{dbUser.mill?.name ?? '— (all mills)'}</dd>
             <dt className="text-stone-500">Last sign-in</dt><dd>{fmtNpt(dbUser.lastLoginAt)}</dd>
           </dl>

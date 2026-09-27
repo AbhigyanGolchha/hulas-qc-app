@@ -12,6 +12,7 @@
 // First-time values are written by the data fix in src/lib/data-fixes.ts, so a
 // fresh or upgraded install starts with the old behaviour — as editable data.
 import { prisma } from './db';
+import { hasRole } from './roles';
 
 export type RecordKind = 'intake' | 'qc' | 'production';
 export type Stage = { title: string; role: string; order: number };
@@ -61,7 +62,7 @@ export function currentStage(stages: Stage[], approvalStage: number): Stage | nu
 }
 
 export function roleMayApprove(stage: Stage, role: string, override: boolean): boolean {
-  return role === stage.role || (override && role === 'ADMIN');
+  return (hasRole(stage.role, role) && !stage.role.split(',').includes('ANY')) || (override && role === 'ADMIN');
 }
 
 // may this user approve / reject this record's current step right now?

@@ -137,7 +137,7 @@ export default async function ProductionPage({ params }: { params: { id: string 
         suppliers={suppliers.map((x) => x.name)}
         canApprove={await canApproveNow('production', r.approvalStage, user.role)}
         canUnlock={await canUnlockNow('production', user.role)}
-        sapEnabled={await isSapEnabled()}
+        sapEnabled={await isSapEnabled()} canDelete={user.permissions.includes('reports.delete')} canSubmit={user.permissions.includes('production.edit')}
       />
       <div className="mt-5">
         <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={await canUnlockNow('production', user.role)} />

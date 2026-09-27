@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Hulas Khadya QC',
-  description: 'Quality Control & Daily Production reporting — Hulas Khadya Udyog Pvt. Ltd.',
+  description: 'Quality Control & Daily Production reporting — Hulas Khadya Udhyog Ltd.',
 };
 
 export const viewport: Viewport = {

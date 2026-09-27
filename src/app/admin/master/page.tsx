@@ -2,17 +2,17 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
 import { PRODUCT_KINDS } from '@/lib/calc';
+import { companyName } from '@/lib/company';
 
 export const dynamic = 'force-dynamic';
 
 async function guard() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.master');
   return user;
 }
 
@@ -63,9 +63,35 @@ async function updateMill(formData: FormData) {
     mainYieldMin: formData.get('mymin') ? Number(formData.get('mymin')) : null,
     mainYieldMax: formData.get('mymax') ? Number(formData.get('mymax')) : null,
     sapPlantCode: String(formData.get('sap') || '').trim() || null,
+    ...(String(formData.get('name') || '').trim() ? { name: String(formData.get('name')).trim() } : {}),
   };
   await prisma.mill.update({ where: { id }, data });
   await logAudit(user, 'MASTER', id, 'UPDATE', 'mill.thresholds', null, JSON.stringify(data));
+  revalidatePath('/admin/master');
+}
+
+// a new mill: name + short code (used in batch numbers, e.g. RFM-206)
+async function addMill(formData: FormData) {
+  'use server';
+  const user = await guard();
+  const name = String(formData.get('name') || '').trim();
+  const code = String(formData.get('code') || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!name || !code) return;
+  if (await prisma.mill.findUnique({ where: { code } })) return;
+  const count = await prisma.mill.count();
+  const m = await prisma.mill.create({ data: { name, code, sortOrder: count + 1 } });
+  await logAudit(user, 'MASTER', m.id, 'CREATE', 'mill', null, `${name} (${code})`);
+  revalidatePath('/admin/master');
+}
+
+async function saveCompany(formData: FormData) {
+  'use server';
+  const user = await guard();
+  const value = String(formData.get('company') || '').trim();
+  if (!value) return;
+  const before = await companyName();
+  await prisma.setting.upsert({ where: { key: 'company.name' }, create: { key: 'company.name', value }, update: { value } });
+  await logAudit(user, 'MASTER', 'company.name', 'UPDATE', 'company.name', before, value);
   revalidatePath('/admin/master');
 }
 
@@ -89,6 +115,7 @@ export default async function MasterAdmin() {
     prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
     prisma.packSize.findMany({ orderBy: { sortOrder: 'asc' } }),
   ]);
+  const company = await companyName();
 
   return (
     <Shell user={user} active="/admin">
@@ -99,7 +126,8 @@ export default async function MasterAdmin() {
             {mills.map((m) => (
               <form key={m.id} action={updateMill} className="flex flex-wrap items-end gap-2 text-sm">
                 <input type="hidden" name="id" value={m.id} />
-                <span className="w-36 font-medium">{m.name}</span>
+                <label className="text-xs">Mill name<br /><input name="name" defaultValue={m.name} className="field w-52 font-medium" /></label>
+                <span className="self-center rounded bg-stone-100 px-1.5 py-0.5 text-xs text-stone-500" title="Batch-number code">{m.code}</span>
                 <label className="text-xs">Total rec. min<br /><input name="trmin" type="number" step="any" defaultValue={m.totalRecoveryMin ?? ''} className="field w-20" /></label>
                 <label className="text-xs">max<br /><input name="trmax" type="number" step="any" defaultValue={m.totalRecoveryMax ?? ''} className="field w-20" /></label>
                 <label className="text-xs">Main yield min<br /><input name="mymin" type="number" step="any" defaultValue={m.mainYieldMin ?? ''} className="field w-20" /></label>
@@ -109,6 +137,19 @@ export default async function MasterAdmin() {
               </form>
             ))}
           </div>
+          <form action={addMill} className="mt-3 flex flex-wrap items-end gap-2 border-t border-stone-100 pt-3 text-sm">
+            <label className="text-xs">New mill name<br /><input name="name" required className="field w-52" placeholder="e.g. Maida Mill" /></label>
+            <label className="text-xs">Batch code<br /><input name="code" required className="field w-24" placeholder="e.g. MDM" /></label>
+            <button className="btn-secondary">Add mill</button>
+            <span className="text-xs text-stone-400">Add its products in Admin → Parameters.</span>
+          </form>
+        </Card>
+
+        <Card title="Company name on printed reports">
+          <form action={saveCompany} className="flex flex-wrap items-end gap-2 text-sm">
+            <label className="text-xs">Printed at the top of every report, under the HKU logo<br /><input name="company" defaultValue={company} className="field w-80" /></label>
+            <button className="btn-secondary">Save</button>
+          </form>
         </Card>
 
         <Card title="Products — type & shelf life (drives best-before)">

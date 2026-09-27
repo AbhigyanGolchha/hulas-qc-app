@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   const isWorker = workerSecret && req.headers.get('x-worker-secret') === workerSecret;
   if (!isWorker) {
     const user = await getSessionUser();
-    if (!user || (user.role !== 'ADMIN' && user.role !== 'MANAGER')) return NextResponse.json({ error: 'Manager/Admin only' }, { status: 403 });
+    if (!user || !user.permissions.includes('admin.sap')) return NextResponse.json({ error: 'Your role may not run SAP sync' }, { status: 403 });
   }
   const result = await syncPending();
   return NextResponse.json(result);

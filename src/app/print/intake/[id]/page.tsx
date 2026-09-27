@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
+import { companyName } from '@/lib/company';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
 import { getSignatures, printSlots } from '@/lib/sign';
 import { DECISIONS, type Decision } from '@/lib/constants';
@@ -19,7 +20,7 @@ export default async function PrintIntake({ params }: { params: { id: string } }
     },
   });
   if (!r) notFound();
-  const company = (await prisma.setting.findUnique({ where: { key: 'company.name' } }))?.value ?? 'Hulas Khadya Udyog Pvt. Ltd.';
+  const company = await companyName();
 
   return (
     <>

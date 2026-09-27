@@ -10,7 +10,7 @@
 import { prisma } from './db';
 import type { SessionUser } from './auth';
 import { logAudit } from './audit';
-import { ROLE_LABELS, type Role } from './constants';
+import { roleListLabel, roleSet, hasRole } from './roles';
 import { canUnlockNow, getStages, type RecordKind } from './approval';
 
 export type { RecordKind };
@@ -48,11 +48,11 @@ export async function savePreparerSlots(kind: RecordKind, slots: SlotDef[]) {
 }
 
 export function roleMaySign(slot: SlotDef, role: string): boolean {
-  return slot.role === 'ANY' || slot.role === role;
+  return hasRole(slot.role, role);
 }
 
-export function slotRoleLabel(role: string): string {
-  return role === 'ANY' ? 'anyone who can edit the report' : ROLE_LABELS[role as Role] ?? role;
+export async function slotRoleLabel(role: string): Promise<string> {
+  return roleListLabel(role);
 }
 
 // the preparer slot a submitter signs automatically: the one bound to their
@@ -60,7 +60,7 @@ export function slotRoleLabel(role: string): string {
 // that belongs to somebody else's role.
 export async function defaultSlot(kind: RecordKind, role: string): Promise<string | null> {
   const slots = await getPreparerSlots(kind);
-  return (slots.find((s) => s.role === role) ?? slots.find((s) => s.role === 'ANY'))?.title ?? null;
+  return (slots.find((s) => !roleSet(s.role).includes('ANY') && roleSet(s.role).includes(role)) ?? slots.find((s) => roleSet(s.role).includes('ANY')))?.title ?? null;
 }
 
 // Mirror signatures into the old name columns (lists, CSV, SAP payload) for
@@ -88,7 +88,7 @@ export async function signRecord(user: SessionUser, kind: RecordKind, recordId: 
     if (approverSlots.includes(slot) && !preparer) throw new Error('Approval slots are signed by the Approve action, not here.');
     if (!preparer) throw new Error(`Unknown signature slot "${slot}"`);
     if (!roleMaySign(preparer, user.role)) {
-      throw new Error(`Only a ${slotRoleLabel(preparer.role)} can sign as "${slot}".`);
+      throw new Error(`Only a ${await slotRoleLabel(preparer.role)} can sign as "${slot}".`);
     }
   }
   const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
@@ -156,11 +156,12 @@ export async function slotViews(kind: RecordKind, recordId: string, viewerRole?:
   const preparers = await getPreparerSlots(kind);
 
   // who may sign each preparer slot, by name — so the panel can say "for: Ram, Sita"
-  const roles = [...new Set(preparers.map((p) => p.role).filter((r) => r !== 'ANY'))];
+  const roles = [...new Set(preparers.flatMap((p) => roleSet(p.role)).filter((r) => r !== 'ANY'))];
   const eligible = roles.length
     ? await prisma.user.findMany({ where: { active: true, role: { in: roles } }, select: { name: true, role: true }, orderBy: { name: 'asc' } })
     : [];
 
+  const labels = Object.fromEntries(await Promise.all(preparers.map(async (p) => [p.role, await slotRoleLabel(p.role)] as const)));
   const sigs = await getSignatures(kind, recordId);
   const bySlot = new Map(sigs.map((s) => [s.slot, s]));
   return [
@@ -168,8 +169,8 @@ export async function slotViews(kind: RecordKind, recordId: string, viewerRole?:
       slot: p.title,
       isApprover: false,
       isCurrentStage: false,
-      signerRole: slotRoleLabel(p.role),
-      eligibleNames: p.role === 'ANY' ? [] : eligible.filter((u) => u.role === p.role).map((u) => u.name),
+      signerRole: labels[p.role],
+      eligibleNames: roleSet(p.role).includes('ANY') ? [] : eligible.filter((u) => roleSet(p.role).includes(u.role)).map((u) => u.name),
       canSign: viewerRole ? roleMaySign(p, viewerRole) : false,
     })),
     ...approverSlots.map((slot, i) => ({ slot, isApprover: true, isCurrentStage: i === Math.min(done, approverSlots.length - 1), signerRole: null, eligibleNames: [] as string[], canSign: false })),

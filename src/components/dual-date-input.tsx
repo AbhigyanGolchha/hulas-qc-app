@@ -59,3 +59,15 @@ export function DualDateInput({
     </div>
   );
 }
+
+// For plain server-action forms (the "New report" screens): the same AD ↔ BS
+// input, posting the AD date as a hidden field named `name`.
+export function DualDateField({ name, defaultAd }: { name: string; defaultAd: string }) {
+  const [ad, setAd] = useState(defaultAd);
+  return (
+    <>
+      <DualDateInput ad={ad} onChange={(nextAd) => setAd(nextAd)} />
+      <input type="hidden" name={name} value={ad} />
+    </>
+  );
+}

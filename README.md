@@ -101,6 +101,23 @@ every timestamp on screen, in prints and in emails shows Nepal time ("NPT").
   passwords lock the account for 15 minutes (Admin can unlock). Every sign-in, failure,
   sign-out, password change and reset is in the audit log under *Sign-ins & passwords*.
   Users can be deactivated (kept for the audit trail) and reactivated.
+- **Roles & permissions** (Admin → Roles & permissions): roles are data — create them, rename
+  them, tick what each may do (create/fill in each module, delete reports, each Admin page).
+  The Admin role always has everything (lock-out guard). Sign-off slots and approval steps in
+  the Approval matrix may each allow several roles ("QC Analyst or Manager").
+- **Inbox** (first menu item, with a count badge): each user's own list of reports waiting for
+  their signature or approval (Sign / Review & approve buttons jump to the sign-off panel) and
+  everything they have signed. Built from the session only — nobody sees another's Inbox.
+- **Deleting**: only roles with "Delete reports" (Admin by default) see Delete on a report and
+  tick-boxes + "Delete selected" on the lists; any status; each deletion is audited. Admin →
+  Users can permanently delete a user together with their sign-in history (signatures on
+  reports keep the name).
+- **Audit log** shows the IP address of every sign-in, failed sign-in, sign-out and password event.
+- **Welcome email** on account creation: login link (the address the Admin is using), username,
+  temporary password and first-sign-in steps. Needs email switched on (Admin → Notifications);
+  Admin → Users warns in red while it is off.
+- **Reports** print the HKU logo (`public/hku-logo.png`) and the company name from Admin →
+  Master data (default "Hulas Khadya Udhyog Ltd."). Mills can be renamed/added there too.
 - **Forgot password?** (login page → `/forgot-password`): if the account has an email address
   and email is on, a one-time reset link (30 min) is emailed — it's signed over the current
   password hash, so it dies once used or after any reset. Otherwise the Admin is told and sees

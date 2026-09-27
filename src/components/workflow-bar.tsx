@@ -14,6 +14,8 @@ export function WorkflowBar({
   canUnlock,
   beforeSubmit,
   sapEnabled = false,
+  canDelete = false,
+  canSubmit = true,
 }: {
   type: 'intake' | 'qc' | 'production';
   id: string;
@@ -22,6 +24,8 @@ export function WorkflowBar({
   canUnlock: boolean;
   beforeSubmit?: () => Promise<void>; // flush autosave first
   sapEnabled?: boolean; // shows the SAP JSON export only when the integration is switched on
+  canDelete?: boolean; // "Delete reports" permission — any status
+  canSubmit?: boolean; // the module's "create & fill in" permission
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -35,7 +39,7 @@ export function WorkflowBar({
     if (needReason) {
       reason = window.prompt('Reason for unlocking (goes to the audit log):') ?? undefined;
     }
-    if (action === 'delete' && !window.confirm('Delete this draft? This cannot be undone.')) return;
+    if (action === 'delete' && !window.confirm(`Permanently delete this ${status === 'DRAFT' ? 'draft' : status.toLowerCase() + ' report'}? This cannot be undone (the audit log keeps a record of the deletion).`)) return;
     setBusy(true);
     try {
       if (action === 'submit' && beforeSubmit) await beforeSubmit();
@@ -64,14 +68,14 @@ export function WorkflowBar({
     <div className="no-print space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge status={status} />
-        {(status === 'DRAFT' || status === 'REJECTED') && (
+        {canSubmit && (status === 'DRAFT' || status === 'REJECTED') && (
           <button className="btn-primary" disabled={busy} onClick={() => act('submit')}>
             Submit for approval
           </button>
         )}
-        {status === 'DRAFT' && (
+        {canDelete && (
           <button className="btn-danger" disabled={busy} onClick={() => act('delete')}>
-            Delete draft…
+            Delete report…
           </button>
         )}
         {status === 'SUBMITTED' && canApprove && (

@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
+import { DualDateField } from '@/components/dual-date-input';
 import { PageTitle, Card } from '@/components/ui';
 import { nextReportNo } from '@/lib/numbering';
 import { adToBs, todayKathmandu } from '@/lib/dates';
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 async function createDraft(formData: FormData) {
   'use server';
-  const user = await requireUser();
+  const user = await requirePermission('intake.edit');
   const materialId = String(formData.get('materialId'));
   const dateAd = String(formData.get('dateAd') || todayKathmandu());
   const millId = String(formData.get('millId') || '') || null;
@@ -46,7 +47,7 @@ async function createDraft(formData: FormData) {
 }
 
 export default async function NewIntake() {
-  const user = await requireUser();
+  const user = await requirePermission('intake.edit');
   const [materials, mills] = await Promise.all([
     prisma.material.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
     prisma.mill.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
@@ -73,10 +74,10 @@ export default async function NewIntake() {
               ))}
             </select>
           </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium">Date (AD)</span>
-            <input type="date" name="dateAd" defaultValue={todayKathmandu()} className="field" />
-          </label>
+          <div className="block text-sm">
+            <span className="mb-1 block font-medium">Date (AD ↔ BS — type either one)</span>
+            <DualDateField name="dateAd" defaultAd={todayKathmandu()} />
+          </div>
           <button className="btn-primary">Create draft report</button>
         </form>
       </Card>
