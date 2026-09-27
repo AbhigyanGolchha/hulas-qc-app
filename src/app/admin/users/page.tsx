@@ -11,6 +11,7 @@ import { ROLES, ROLE_LABELS } from '@/lib/constants';
 import { logAudit } from '@/lib/audit';
 import { sendAccountMail } from '@/lib/notify';
 import { fmtNpt } from '@/lib/dates';
+import { openResetRequests } from '@/lib/password-reset';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,6 +127,9 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
     prisma.mill.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
   ]);
   const now = new Date();
+  // "Forgot password?" requests that couldn't be emailed a link — waiting on the Admin
+  const resetRequests = await openResetRequests();
+  const requesters = users.filter((u) => resetRequests.has(u.id));
 
   return (
     <Shell user={admin} active="/admin">
@@ -141,6 +145,22 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
             {searchParams.mailed === '1' ? 'Also emailed to the user (see Admin → Notifications for delivery status). ' : 'The user has no email address — pass this on to them yourself. '}
             They will be asked to choose their own password the first time they sign in.
           </div>
+        </div>
+      )}
+
+      {requesters.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <div className="font-semibold">Asked for a password reset ({requesters.length})</div>
+          <p className="mb-2 text-xs">These people used &quot;Forgot password?&quot; but have no email address on their account (or email is off), so no link could be sent. Press Reset and give them the temporary password.</p>
+          <ul className="space-y-1">
+            {requesters.map((u) => (
+              <li key={u.id} className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{u.name}</span> <code className="text-xs">{u.username}</code>
+                <span className="text-xs text-amber-700">asked {fmtNpt(resetRequests.get(u.id))}</span>
+                <form action={resetPassword}><input type="hidden" name="id" value={u.id} /><button className="btn-secondary !py-0.5 text-xs">Reset password…</button></form>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -170,6 +190,7 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
                   <span className="text-xs text-stone-400">{u.email ?? 'no email'}</span>
                   {!u.active && <span className="rounded bg-stone-200 px-1.5 py-0.5 text-xs">deactivated</span>}
                   {locked && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">locked until {fmtNpt(u.lockedUntil)}</span>}
+                  {resetRequests.has(u.id) && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">asked for a password reset</span>}
                   {u.mustChangePassword && u.active && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">temp password — not yet changed</span>}
                   <span className="ml-auto text-xs text-stone-400">last sign-in {fmtNpt(u.lastLoginAt)}</span>
                 </summary>

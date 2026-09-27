@@ -222,4 +222,5 @@ npm run b1:test      # practice SAP with the pretend server
 npm run b1:provision # one-time real-SAP setup (needs superuser)
 npm run sap:worker   # delivery robot: keeps retrying SAP sends
 npm run mail:worker  # email robot: keeps retrying queued emails
+npm run user:reset -- admin   # locked out? prints a temporary password for that user
 ```

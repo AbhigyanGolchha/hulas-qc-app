@@ -101,6 +101,11 @@ every timestamp on screen, in prints and in emails shows Nepal time ("NPT").
   passwords lock the account for 15 minutes (Admin can unlock). Every sign-in, failure,
   sign-out, password change and reset is in the audit log under *Sign-ins & passwords*.
   Users can be deactivated (kept for the audit trail) and reactivated.
+- **Forgot password?** (login page → `/forgot-password`): if the account has an email address
+  and email is on, a one-time reset link (30 min) is emailed — it's signed over the current
+  password hash, so it dies once used or after any reset. Otherwise the Admin is told and sees
+  the request at the top of Admin → Users. Never reveals whether a username exists; one
+  request per account per 5 min. Last resort on the server: `npm run user:reset -- <username>`.
 - **Email notifications** (Admin → Notifications): every module raises events —
   *submitted* (to the role that must approve the current step), *approval step done*,
   *fully approved* / *rejected* / *unlocked* (to the preparer + signers), *QC FAIL*,
