@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
@@ -12,8 +12,7 @@ export const dynamic = 'force-dynamic';
 
 async function saveSpec(formData: FormData) {
   'use server';
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') return;
+  const user = await requirePermission('admin.specs');
   const parameterId = String(formData.get('parameterId'));
   const operator = String(formData.get('operator'));
   const min = formData.get('min') ? Number(formData.get('min')) : null;
@@ -26,6 +25,16 @@ async function saveSpec(formData: FormData) {
   if (!displayText) return;
 
   const last = await prisma.specVersion.findFirst({ where: { parameterId }, orderBy: { version: 'desc' } });
+  // a "text must match" answer that isn't in the dropdown could never be picked — add it
+  if (operator === 'TEXT_MATCH' && textExpected) {
+    const param = await prisma.parameter.findUniqueOrThrow({ where: { id: parameterId } });
+    if (param.valueType === 'SELECT') {
+      const opts: string[] = param.options ? JSON.parse(param.options) : [];
+      if (!opts.some((o) => o.toLowerCase() === textExpected.toLowerCase())) {
+        await prisma.parameter.update({ where: { id: parameterId }, data: { options: JSON.stringify([textExpected, ...opts]) } });
+      }
+    }
+  }
   const created = await prisma.specVersion.create({
     data: {
       parameterId,
@@ -39,8 +48,7 @@ async function saveSpec(formData: FormData) {
 }
 
 async function guardAdmin() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.specs');
   return user;
 }
 
@@ -160,6 +168,34 @@ async function toggleParameter(formData: FormData) {
   redirect(`/admin/specs?t=${sel}`);
 }
 
+// edit the parameter itself (not its limits — those are versioned specs):
+// name, unit, dropdown choices, 3 samples, IR column
+async function updateParameter(formData: FormData) {
+  'use server';
+  const user = await guardAdmin();
+  const id = String(formData.get('id'));
+  const sel = String(formData.get('template') || '');
+  const p = await prisma.parameter.findUniqueOrThrow({ where: { id }, include: { specVersions: { orderBy: { version: 'desc' }, take: 1 } } });
+  const name = String(formData.get('name') || '').trim() || p.name;
+  const unit = String(formData.get('unit') || '').trim() || null;
+  let options = p.options;
+  if (p.valueType === 'SELECT') {
+    const list = String(formData.get('options') || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const expected = p.specVersions[0]?.operator === 'TEXT_MATCH' ? p.specVersions[0].textExpected : null;
+    if (expected && !list.some((o) => o.toLowerCase() === expected.toLowerCase())) list.unshift(expected);
+    options = JSON.stringify(list);
+  }
+  const data = {
+    name, unit, options,
+    sampleCount: formData.get('threeSamples') === 'on' ? 3 : 1,
+    hasIr: formData.get('hasIr') === 'on',
+  };
+  await prisma.parameter.update({ where: { id }, data });
+  await logAudit(user, 'MASTER', id, 'UPDATE', 'parameter',
+    JSON.stringify({ name: p.name, unit: p.unit, options: p.options, sampleCount: p.sampleCount, hasIr: p.hasIr }), JSON.stringify(data));
+  redirect(`/admin/specs?t=${sel}&p=${id}&msg=` + encodeURIComponent(`"${name}" saved — sheets show the change straight away.`));
+}
+
 // the extra "IR moisture" instrument-reading column on QC sheets (e.g. First
 // Break Moisture and Final Moisture Content on the Maida form)
 async function toggleIr(formData: FormData) {
@@ -174,8 +210,7 @@ async function toggleIr(formData: FormData) {
 }
 
 export default async function SpecsAdmin({ searchParams }: { searchParams: { t?: string; p?: string; msg?: string; err?: string } }) {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.specs');
 
   const [materials, products, mills, retiredMaterials, retiredProducts] = await Promise.all([
     prisma.material.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
@@ -362,6 +397,28 @@ export default async function SpecsAdmin({ searchParams }: { searchParams: { t?:
           </div>
         </form>
       </Card>
+
+      {editing && (
+        <Card title={`Edit parameter — ${editing.name}`} className="mt-4 max-w-2xl">
+          <form action={updateParameter} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input type="hidden" name="id" value={editing.id} />
+            <input type="hidden" name="template" value={sel} />
+            <label className="text-sm">Parameter name<br /><input name="name" defaultValue={editing.name} required className="field" /></label>
+            <label className="text-sm">Unit<br /><input name="unit" defaultValue={editing.unit ?? ''} className="field" /></label>
+            {editing.valueType === 'SELECT' && (
+              <label className="text-sm sm:col-span-2">Dropdown choices — one per line (&quot;— not tested —&quot; is always offered too)<br />
+                <textarea name="options" rows={5} defaultValue={(editing.options ? (JSON.parse(editing.options) as string[]) : []).join('\n')} className="field font-mono" />
+                <span className="text-xs text-stone-400">The expected answer of a &quot;text must match&quot; spec is always kept in the list.</span>
+              </label>
+            )}
+            <div className="flex flex-wrap items-center gap-4 text-sm sm:col-span-2">
+              <label className="flex items-center gap-2"><input type="checkbox" name="threeSamples" defaultChecked={editing.sampleCount === 3} /> 3 samples, auto-averaged</label>
+              <label className="flex items-center gap-2"><input type="checkbox" name="hasIr" defaultChecked={editing.hasIr} /> IR moisture reading column</label>
+            </div>
+            <div className="sm:col-span-2"><button className="btn-primary">Save parameter</button></div>
+          </form>
+        </Card>
+      )}
 
       {editing && (
         <Card title={`New spec version — ${editing.name}`} className="mt-4 max-w-2xl">

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
+import { companyName } from '@/lib/company';
 import { PrintHeader, PrintDates, SignRow, toPrintSigns, td, th } from '@/components/print-bits';
 import { getSignatures, printSlots } from '@/lib/sign';
 import { fmtKg, fmtMinutes, fmtPct, parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct, packedTotalKg, kgToUnits, fmtInt, countsInOutput } from '@/lib/calc';
@@ -22,7 +23,7 @@ export default async function PrintProduction({ params }: { params: { id: string
   });
   if (!r) notFound();
   const packSizes = await prisma.packSize.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } });
-  const company = (await prisma.setting.findUnique({ where: { key: 'company.name' } }))?.value ?? 'Hulas Khadya Udyog Pvt. Ltd.';
+  const company = await companyName();
 
   const netInput = r.inputs.reduce((a, i) => a + (i.netKg ?? 0), 0);
   const shiftMin = shiftMinutes(r.startTime, r.closeTime);

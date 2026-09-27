@@ -47,7 +47,7 @@ export type QcFormData = {
   rows: QcTemplateRow[];
 };
 
-export function QcForm({ initial, canApprove, canUnlock, canOverride, sapEnabled = false }: { initial: QcFormData; canApprove: boolean; canUnlock: boolean; canOverride: boolean; sapEnabled?: boolean }) {
+export function QcForm({ initial, canApprove, canUnlock, canOverride, sapEnabled = false, canDelete = false, canSubmit = true }: { initial: QcFormData; canApprove: boolean; canUnlock: boolean; canOverride: boolean; sapEnabled?: boolean; canDelete?: boolean; canSubmit?: boolean }) {
   const [header, setHeader] = useState(initial.header);
   const [rows, setRows] = useState(initial.rows);
   const editable = ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(initial.status);
@@ -95,7 +95,7 @@ export function QcForm({ initial, canApprove, canUnlock, canOverride, sapEnabled
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <WorkflowBar type="qc" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
+        <WorkflowBar type="qc" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} canDelete={canDelete} canSubmit={canSubmit} />
         <SaveIndicator state={saveState} error={saveError} />
       </div>
 

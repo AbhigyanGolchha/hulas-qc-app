@@ -143,7 +143,7 @@ export function SignoffPanel({
   }
 
   return (
-    <section className="no-print rounded-xl border border-stone-200 bg-white p-4">
+    <section id="signoffs" className="no-print scroll-mt-20 rounded-xl border border-stone-200 bg-white p-4">
       <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-stone-500">Digital sign-offs</h2>
       <p className="mb-3 text-xs text-stone-500">
         Each slot can only be signed by the role shown on it. Submitting signs your own slot automatically.

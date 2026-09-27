@@ -10,6 +10,7 @@ import { durationMinutes, netInputKg, unitsToKg, parseVendors, VENDOR_SEP } from
 import { signRecord, unsignRecord, defaultSlot, type RecordKind } from '@/lib/sign';
 import { EDITABLE, WorkflowError, approveRecord, rejectRecord, submitRecord, unlockRecord, loadRecord } from '@/lib/workflow';
 import { canSetDecision } from '@/lib/approval';
+import { deleteReports, DeleteError } from '@/lib/delete-reports';
 
 type Params = { params: { type: string; id: string } };
 
@@ -20,6 +21,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const body = await req.json();
   const { type, id } = params;
+  // edit permission (Admin → Roles & permissions) — or being the approver the
+  // report is waiting on, who needs to save the Decision / QC override
+  if (['intake', 'qc', 'production'].includes(type) && !user.permissions.includes(`${type}.edit`)) {
+    const kind = type as RecordKind;
+    const rec = await loadRecord(kind, id).catch(() => null);
+    if (!rec || !(await canSetDecision(kind, rec, user.role))) {
+      return NextResponse.json({ error: 'Your role may not edit these reports (Admin → Roles & permissions).' }, { status: 403 });
+    }
+  }
 
   try {
     if (type === 'intake') return await saveIntake(id, body, user);
@@ -44,6 +54,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   try {
     const rec = await loadRecord(kind, id);
 
+    if (action === 'submit' && !user.permissions.includes(`${kind}.edit`)) {
+      return NextResponse.json({ error: 'Your role may not submit these reports (Admin → Roles & permissions).' }, { status: 403 });
+    }
     if (action === 'submit') return NextResponse.json({ ok: true, ...(await submitRecord(user, kind, id)) });
     if (action === 'approve') return NextResponse.json({ ok: true, ...(await approveRecord(user, kind, id)) });
     if (action === 'reject') return NextResponse.json({ ok: true, ...(await rejectRecord(user, kind, id, reason)) });
@@ -68,22 +81,14 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
 
     if (action === 'delete') {
-      // drafts only — anything ever submitted stays forever (audit trail)
-      if (rec.status !== 'DRAFT') {
-        return NextResponse.json({ error: 'Only drafts can be deleted. Submitted and approved records are part of the audit trail.' }, { status: 400 });
-      }
-      await logAudit(user, recordType, id, 'DELETE', undefined, 'DRAFT', `draft ${rec.reportNo} deleted`);
-      await prisma.signature.deleteMany({ where: { recordType, recordId: id } });
-      await prisma.notification.updateMany({ where: { recordId: id, status: { in: ['PENDING', 'SKIPPED'] } }, data: { status: 'SKIPPED', lastError: 'record deleted' } });
-      await prisma.integrationOutbox.deleteMany({ where: { recordId: id } });
-      const model = kind === 'intake' ? prisma.intakeReport : kind === 'qc' ? prisma.qcReport : prisma.productionReport;
-      // @ts-expect-error dynamic model union
-      await model.delete({ where: { id } }); // results/rows cascade
+      // Admin-only by default ("Delete reports" permission) — any status
+      await deleteReports(user, kind, [id]);
       return NextResponse.json({ ok: true, deleted: true });
     }
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (e) {
+    if (e instanceof DeleteError) return NextResponse.json({ error: e.message }, { status: 403 });
     if (e instanceof WorkflowError) {
       return NextResponse.json(e.missing ? { error: e.message, missing: e.missing } : { error: e.message }, { status: e.status });
     }

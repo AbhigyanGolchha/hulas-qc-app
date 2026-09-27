@@ -4,20 +4,21 @@
 // choose their own password on first sign-in.
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser, hashPassword, generateTempPassword, passwordProblem } from '@/lib/auth';
+import { requirePermission, requestBaseUrl, hashPassword, generateTempPassword, passwordProblem } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
-import { ROLES, ROLE_LABELS } from '@/lib/constants';
+import { getRoles } from '@/lib/roles';
 import { logAudit } from '@/lib/audit';
 import { sendAccountMail } from '@/lib/notify';
+import { getMailConfig, isMailConfigured } from '@/lib/mail';
 import { fmtNpt } from '@/lib/dates';
+import { ConfirmButton } from '@/components/confirm-button';
 import { openResetRequests } from '@/lib/password-reset';
 
 export const dynamic = 'force-dynamic';
 
 async function guard() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN') redirect('/admin');
+  const user = await requirePermission('admin.users');
   return user;
 }
 
@@ -42,7 +43,7 @@ async function addUser(formData: FormData) {
     let password = String(formData.get('password') || '').trim();
     if (!/^[a-z0-9._-]{3,32}$/.test(username)) throw new Error('Username: 3–32 characters, lowercase letters, numbers, dot, dash or underscore.');
     if (!name) throw new Error('Full name is required.');
-    if (!(ROLES as readonly string[]).includes(role)) throw new Error('Unknown role.');
+    if (!(await getRoles()).some((r) => r.key === role)) throw new Error('Unknown role.');
     if (await prisma.user.findUnique({ where: { username } })) throw new Error(`Username "${username}" is already taken.`);
     const generated = !password;
     if (generated) password = generateTempPassword();
@@ -52,8 +53,8 @@ async function addUser(formData: FormData) {
     }
     const u = await prisma.user.create({ data: { username, name, email, role, millId, passwordHash: hashPassword(password), mustChangePassword: true } });
     await logAudit(admin, 'MASTER', u.id, 'CREATE', 'user', null, `${name} (${username}, ${role}${email ? ', ' + email : ''})`);
-    await sendAccountMail(u, 'INVITE', password, admin.name);
-    go({ msg: `Account "${username}" created for ${name}.`, temp: password, tempFor: username, mailed: email ? '1' : '0' });
+    await sendAccountMail(u, 'INVITE', password, admin.name, requestBaseUrl());
+    go({ msg: `Account "${username}" created for ${name}.`, temp: password, tempFor: username, mailed: !email ? '0' : isMailConfigured(await getMailConfig()) ? '1' : 'off' });
   } catch (e) {
     if ((e as any)?.digest?.startsWith?.('NEXT_REDIRECT')) throw e;
     go({ err: (e as Error).message });
@@ -70,6 +71,7 @@ async function updateUser(formData: FormData) {
     const role = String(formData.get('role') || before.role);
     const millId = String(formData.get('millId') || '') || null;
     const email = cleanEmail(formData.get('email'));
+    if (!(await getRoles()).some((r) => r.key === role)) throw new Error('Unknown role.');
     if (before.id === admin.id && role !== 'ADMIN') throw new Error('You cannot remove your own Admin role.');
     await prisma.user.update({ where: { id }, data: { name, role, millId, email } });
     const changes: string[] = [];
@@ -106,8 +108,30 @@ async function resetPassword(formData: FormData) {
   const temp = generateTempPassword();
   await prisma.user.update({ where: { id }, data: { passwordHash: hashPassword(temp), mustChangePassword: true, failedLogins: 0, lockedUntil: null } });
   await logAudit(admin, 'AUTH', id, 'PASSWORD_RESET', undefined, null, `by ${admin.name}`);
-  await sendAccountMail(u, 'RESET', temp, admin.name);
-  go({ msg: `Password reset for ${u.name}. They must choose a new one at next sign-in.`, temp, tempFor: u.username, mailed: u.email ? '1' : '0' });
+  await sendAccountMail(u, 'RESET', temp, admin.name, requestBaseUrl());
+  go({ msg: `Password reset for ${u.name}. They must choose a new one at next sign-in.`, temp, tempFor: u.username, mailed: !u.email ? '0' : isMailConfigured(await getMailConfig()) ? '1' : 'off' });
+}
+
+// Permanent delete: the account and its sign-in history (logins, failed
+// logins, password events) are removed. Signatures and report history stay —
+// they keep the person's name, only the link to the deleted account is cleared.
+async function deleteUser(formData: FormData) {
+  'use server';
+  const admin = await guard();
+  const id = String(formData.get('id'));
+  const u = await prisma.user.findUnique({ where: { id } });
+  if (!u) go({ err: 'That user no longer exists.' });
+  if (u!.id === admin.id) go({ err: 'You cannot delete your own account.' });
+  if (u!.role === 'ADMIN' && (await prisma.user.count({ where: { role: 'ADMIN', active: true, id: { not: id } } })) === 0) {
+    go({ err: 'That is the last active Admin — create another Admin first.' });
+  }
+  const signIns = await prisma.auditLog.deleteMany({ where: { recordType: 'AUTH', OR: [{ userId: id }, { recordId: id }] } });
+  await prisma.auditLog.updateMany({ where: { userId: id }, data: { userId: null } });
+  await prisma.signature.updateMany({ where: { userId: id }, data: { userId: null } });
+  await prisma.notification.updateMany({ where: { userId: id }, data: { userId: null } });
+  await prisma.user.delete({ where: { id } });
+  await logAudit(admin, 'MASTER', id, 'DELETE', 'user', `${u!.name} (${u!.username}, ${u!.role})`, `deleted with ${signIns.count} sign-in record(s)`);
+  go({ msg: `${u!.name} (${u!.username}) permanently deleted, with ${signIns.count} sign-in record(s). Their signatures on reports stay, with their name.` });
 }
 
 async function unlock(formData: FormData) {
@@ -122,6 +146,9 @@ async function unlock(formData: FormData) {
 
 export default async function UsersAdmin({ searchParams }: { searchParams: Record<string, string> }) {
   const admin = await guard();
+  const roleList = await getRoles();
+  const ROLES = roleList.map((r) => r.key);
+  const ROLE_LABELS: Record<string, string> = Object.fromEntries(roleList.map((r) => [r.key, r.label]));
   const [users, mills] = await Promise.all([
     prisma.user.findMany({ orderBy: [{ active: 'desc' }, { name: 'asc' }], include: { mill: true } }),
     prisma.mill.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
@@ -129,6 +156,7 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
   const now = new Date();
   // "Forgot password?" requests that couldn't be emailed a link — waiting on the Admin
   const resetRequests = await openResetRequests();
+  const mailOn = isMailConfigured(await getMailConfig());
   const requesters = users.filter((u) => resetRequests.has(u.id));
 
   return (
@@ -142,12 +170,19 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
           <div className="font-semibold text-brand-700">Temporary password for <code>{searchParams.tempFor}</code> — shown only once:</div>
           <div className="my-1 font-mono text-2xl tracking-wide">{searchParams.temp}</div>
           <div className="text-xs text-stone-600">
-            {searchParams.mailed === '1' ? 'Also emailed to the user (see Admin → Notifications for delivery status). ' : 'The user has no email address — pass this on to them yourself. '}
+            {searchParams.mailed === '1' ? 'A welcome email with the login link, username and this password was also sent (delivery status: Admin → Notifications). ' : searchParams.mailed === 'off' ? 'Email is switched off, so NO email was sent — pass this on to them yourself. ' : 'The user has no email address — pass this on to them yourself. '}
             They will be asked to choose their own password the first time they sign in.
           </div>
         </div>
       )}
 
+      {!mailOn && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <b>Email is switched off</b> — welcome emails, password-reset links and all notifications are NOT being sent (they wait in
+          Admin → Notifications as &quot;skipped&quot;). Fill in the SMTP settings and switch email on in{' '}
+          <a href="/admin/notifications" className="font-medium underline">Admin → Notifications</a>, then press &quot;Send pending&quot;.
+        </div>
+      )}
       {requesters.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <div className="font-semibold">Asked for a password reset ({requesters.length})</div>
@@ -185,7 +220,7 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
                 <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                   <span className="font-medium">{u.name}</span>
                   <code className="text-xs text-stone-500">{u.username}</code>
-                  <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">{ROLE_LABELS[u.role as keyof typeof ROLE_LABELS] ?? u.role}</span>
+                  <span className="rounded bg-stone-100 px-1.5 py-0.5 text-xs">{ROLE_LABELS[u.role] ?? u.role}</span>
                   {u.mill && <span className="text-xs text-stone-500">{u.mill.name}</span>}
                   <span className="text-xs text-stone-400">{u.email ?? 'no email'}</span>
                   {!u.active && <span className="rounded bg-stone-200 px-1.5 py-0.5 text-xs">deactivated</span>}
@@ -208,6 +243,12 @@ export default async function UsersAdmin({ searchParams }: { searchParams: Recor
                   <form action={resetPassword}><input type="hidden" name="id" value={u.id} /><button className="btn-secondary">Reset password…</button></form>
                   {u.id !== admin.id && (
                     <form action={toggleActive}><input type="hidden" name="id" value={u.id} /><button className={u.active ? 'btn-danger' : 'btn-secondary'}>{u.active ? 'Deactivate' : 'Reactivate'}</button></form>
+                  )}
+                  {u.id !== admin.id && (
+                    <form action={deleteUser}>
+                      <input type="hidden" name="id" value={u.id} />
+                      <ConfirmButton message={`Permanently delete ${u.name} (${u.username}) and their sign-in history? This cannot be undone. Their signatures on reports stay, with their name.`}>Delete…</ConfirmButton>
+                    </form>
                   )}
                 </div>
               </details>

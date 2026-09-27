@@ -3,11 +3,11 @@
 // the queue shown here, so this page is also the place to see what was sent.
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { ActionButton } from '@/components/action-button';
-import { ROLES, ROLE_LABELS } from '@/lib/constants';
+import { getRoles } from '@/lib/roles';
 import { logAudit } from '@/lib/audit';
 import { getMailConfig, isMailConfigured, sendRaw, verifySmtp, sendPendingMail, deliverNotification } from '@/lib/mail';
 import { EVENTS, getRules, saveRules, type EventKey, type Rules } from '@/lib/notify';
@@ -21,8 +21,7 @@ function isRedirect(e: unknown) {
 const go = (q: Record<string, string>) => redirect('/admin/notifications?' + new URLSearchParams(q).toString());
 
 async function guard() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.notifications');
   return user;
 }
 
@@ -42,10 +41,11 @@ async function saveSmtp(formData: FormData) {
 async function saveRoutes(formData: FormData) {
   'use server';
   const user = await guard();
+  const roleKeys = (await getRoles()).map((r) => r.key);
   const rules: Rules = {};
   for (const k of Object.keys(EVENTS) as EventKey[]) {
     rules[k] = {
-      roles: ROLES.filter((r) => formData.get(`${k}__${r}`) === 'on'),
+      roles: roleKeys.filter((r) => formData.get(`${k}__${r}`) === 'on'),
       extraEmails: String(formData.get(`${k}__extra`) ?? '').split(/[,;\s]+/).map((s) => s.trim().toLowerCase()).filter((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)),
     };
   }
@@ -95,6 +95,9 @@ async function retryOne(formData: FormData) {
 
 export default async function NotificationsAdmin({ searchParams }: { searchParams: Record<string, string> }) {
   const user = await guard();
+  const roleList = await getRoles();
+  const ROLES = roleList.map((r) => r.key);
+  const ROLE_LABELS: Record<string, string> = Object.fromEntries(roleList.map((r) => [r.key, r.label]));
   const cfg = await getMailConfig();
   const configured = isMailConfigured(cfg);
   const hasPw = Boolean(cfg.password);
@@ -160,7 +163,7 @@ export default async function NotificationsAdmin({ searchParams }: { searchParam
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead className="text-left uppercase text-stone-500">
-                  <tr><th className="py-1 pr-2">Event</th>{ROLES.map((r) => <th key={r} className="px-1 py-1 text-center">{ROLE_LABELS[r].split(' ')[0]}</th>)}<th className="py-1 pl-2">Extra addresses</th></tr>
+                  <tr><th className="py-1 pr-2">Event</th>{ROLES.map((r) => <th key={r} className="px-1 py-1 text-center">{ROLE_LABELS[r]}</th>)}<th className="py-1 pl-2">Extra addresses</th></tr>
                 </thead>
                 <tbody>
                   {(Object.keys(EVENTS) as EventKey[]).map((k) => (

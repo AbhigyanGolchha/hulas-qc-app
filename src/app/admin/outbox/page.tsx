@@ -1,14 +1,13 @@
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
 
 export default async function OutboxPage() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.sap');
   const items = await prisma.integrationOutbox.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
   return (
     <Shell user={user} active="/admin">

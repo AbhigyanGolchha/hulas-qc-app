@@ -30,7 +30,9 @@ export default async function LoginPage({ searchParams }: { searchParams: { erro
     <main className="flex min-h-screen items-center justify-center p-4">
       <form action={login} className="w-full max-w-sm space-y-4 rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
         <div className="text-center">
-          <div className="text-2xl font-bold text-brand-700">Hulas Khadya Udyog</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/hku-logo.png" alt="" className="mx-auto mb-2 h-16 w-auto" />
+          <div className="text-2xl font-bold text-brand-700">Hulas Khadya Udhyog</div>
           <div className="mt-1 text-sm text-stone-500">QC & Daily Production Reporting</div>
         </div>
         {searchParams.out && (

@@ -126,13 +126,105 @@ const FIXES: Fix[] = [
       return done.length ? done.join(', ') : 'already configured';
     },
   },
+  {
+    // Roles & permissions (Sep 2026): roles become data. Write the five roles
+    // the app shipped with, with exactly the rights they had, so nothing
+    // changes until the Admin edits them. Deleting reports is Admin-only.
+    id: '2026-09-roles-seed',
+    describe: 'Roles & permissions written into the database',
+    run: async () => {
+      if (await prisma.setting.findUnique({ where: { key: 'roles' } })) return 'already configured';
+      const edit = ['intake.edit', 'qc.edit', 'production.edit'];
+      const roles = [
+        { key: 'ADMIN', label: 'Admin', permissions: [] },
+        { key: 'MANAGER', label: 'Manager / GM', permissions: [...edit, 'admin.panel', 'admin.matrix', 'admin.specs', 'admin.master', 'admin.notifications', 'admin.audit', 'admin.sap'] },
+        { key: 'QC', label: 'QC Analyst', permissions: edit },
+        { key: 'SUPERVISOR', label: 'Production Supervisor', permissions: edit },
+        { key: 'GODOWN', label: 'Godown Keeper', permissions: edit },
+      ];
+      await prisma.setting.create({ data: { key: 'roles', value: JSON.stringify(roles) } });
+      return `${roles.length} roles`;
+    },
+  },
+  {
+    // Report header (Sep 2026 issue list): "HULAS KHADYA UDHYOG LTD." replaces
+    // the old "Pvt. Ltd." name — only if nobody has typed their own since.
+    id: '2026-09-company-name',
+    describe: 'Report company name → Hulas Khadya Udhyog Ltd.',
+    run: async () => {
+      const row = await prisma.setting.findUnique({ where: { key: 'company.name' } });
+      if (row && row.value !== 'Hulas Khadya Udyog Pvt. Ltd.') return `kept "${row.value}"`;
+      await prisma.setting.upsert({ where: { key: 'company.name' }, create: { key: 'company.name', value: 'Hulas Khadya Udhyog Ltd.' }, update: { value: 'Hulas Khadya Udhyog Ltd.' } });
+      return 'updated';
+    },
+  },
+  {
+    // Sep 2026 issue list: "Need option of Maida Mill". The Roller Flour Mill
+    // IS the maida plant (its paper form is the "Maida Plan Daily Report"), so
+    // its name now says so; batch code RFM and all history stay as they are.
+    id: '2026-09-maida-mill-name',
+    describe: 'Roller Flour Mill → "Maida Mill (Roller Flour Mill)"',
+    run: async () => {
+      const r = await prisma.mill.updateMany({ where: { code: 'RFM', name: 'Roller Flour Mill' }, data: { name: 'Maida Mill (Roller Flour Mill)' } });
+      return `${r.count} mill(s) renamed`;
+    },
+  },
+  {
+    // Sep 2026 issue list: a choice-list parameter whose "text must match"
+    // answer is not in its dropdown can never pass (Wheat "Appearance / Smell"
+    // expects "Bright, Clean, Uniform" but offered Grainy/Dull/…). Put the
+    // expected answer first in every such list; Texture also gets "Normal".
+    id: '2026-09-select-options',
+    describe: 'Dropdown choices include the expected answer (+ "Normal" for Texture)',
+    run: async () => {
+      const params = await prisma.parameter.findMany({
+        where: { valueType: 'SELECT' },
+        include: { specVersions: { orderBy: { version: 'desc' }, take: 1 } },
+      });
+      let changed = 0;
+      for (const p of params) {
+        let options: string[] = [];
+        try { options = p.options ? JSON.parse(p.options) : []; } catch { options = []; }
+        const has = (v: string) => options.some((o) => o.trim().toLowerCase() === v.trim().toLowerCase());
+        const next = [...options];
+        const spec = p.specVersions[0];
+        if (spec?.operator === 'TEXT_MATCH' && spec.textExpected && !has(spec.textExpected)) next.unshift(spec.textExpected.trim());
+        if (p.name.trim().toLowerCase() === 'texture' && !has('Normal')) next.push('Normal');
+        if (next.length !== options.length) {
+          await prisma.parameter.update({ where: { id: p.id }, data: { options: JSON.stringify(next) } });
+          changed++;
+        }
+      }
+      return `${changed} parameter(s) updated`;
+    },
+  },
+  {
+    // Sep 2026 issue list: the IR moisture box was still missing on First Break
+    // Moisture on the plant server. Retry case-insensitively (the first fix
+    // matched the exact name only).
+    id: '2026-09-first-break-ir-v2',
+    describe: 'First Break Moisture gets the IR moisture column (any spelling)',
+    run: async () => {
+      const params = await prisma.parameter.findMany({ where: { productId: { not: null }, hasIr: false, valueType: 'NUMBER' } });
+      const hits = params.filter((p) => /first\s*break\s*moisture/i.test(p.name));
+      for (const p of hits) await prisma.parameter.update({ where: { id: p.id }, data: { hasIr: true } });
+      return `${hits.length} parameter(s) updated`;
+    },
+  },
 ];
 
 export async function runDataFixes() {
   for (const fix of FIXES) {
     const key = `datafix.${fix.id}`;
     if (await prisma.setting.findUnique({ where: { key } })) continue;
-    const result = await fix.run();
+    let result: string;
+    try {
+      result = await fix.run();
+    } catch (e) {
+      // one broken fix must not stop the others; it retries next start
+      console.error(`[data-fix] ${fix.describe} FAILED:`, e);
+      continue;
+    }
     await prisma.setting.create({ data: { key, value: `${new Date().toISOString()} — ${result}` } });
     await prisma.auditLog.create({
       data: { userName: 'system', recordType: 'MASTER', recordId: fix.id, action: 'UPDATE', field: 'data-fix', newValue: `${fix.describe}: ${result}` },

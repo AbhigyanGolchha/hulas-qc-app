@@ -2,6 +2,7 @@
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
 import { PrintButton } from '@/components/print-button';
+import { companyName } from '@/lib/company';
 import { PrintHeader, td, th } from '@/components/print-bits';
 import { adToBs, formatAdLong, formatMiti, fmtNpt } from '@/lib/dates';
 import { fmtKg, fmtMinutes, fmtPct } from '@/lib/calc';
@@ -13,7 +14,7 @@ export default async function PrintWeekly({ searchParams }: { searchParams: { st
   const user = await requireUser();
   const start = resolveWeekStart(searchParams.start);
   const { end, mills } = await buildWeekly(start);
-  const company = (await prisma.setting.findUnique({ where: { key: 'company.name' } }))?.value ?? 'Hulas Khadya Udyog Pvt. Ltd.';
+  const company = await companyName();
 
   return (
     <>

@@ -4,7 +4,7 @@
 import { prisma } from './db';
 import type { SessionUser } from './auth';
 import { logAudit } from './audit';
-import { ROLE_LABELS, type Role } from './constants';
+import { roleListLabel, roleSet } from './roles';
 import { exportToOutbox } from './sap';
 import { signRecord, voidSignatures, defaultSlot, type RecordKind } from './sign';
 import { getStages, currentStage, roleMayApprove, adminOverride, canUnlockNow, type Stage } from './approval';
@@ -47,12 +47,14 @@ export async function submitRecord(user: SessionUser, kind: RecordKind, id: stri
   await modelFor(kind).update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0 } });
   // submitting IS signing: the submitter's e-signature lands in the slot bound
   // to their role (none if no slot is theirs — they never sign someone else's)
+  // — but never over someone who already signed it (several roles may share a slot)
   const ownSlot = await defaultSlot(kind, user.role);
-  if (ownSlot) await signRecord(user, kind, id, ownSlot);
+  const taken = ownSlot && (await prisma.signature.findUnique({ where: { recordType_recordId_slot: { recordType: kind.toUpperCase(), recordId: id, slot: ownSlot } } }));
+  if (ownSlot && !taken) await signRecord(user, kind, id, ownSlot);
   await logAudit(user, kind.toUpperCase(), id, 'SUBMIT');
 
   // tell the first approver, plus any module-specific alarms
-  await notifyEvent({ event: 'SUBMITTED', kind, recordId: id, actor: user, roles: [stages[0].role] });
+  await notifyEvent({ event: 'SUBMITTED', kind, recordId: id, actor: user, roles: roleSet(stages[0].role) });
   await moduleAlarms(user, kind, id);
   return { status: 'SUBMITTED' };
 }
@@ -78,7 +80,7 @@ async function moduleAlarms(user: SessionUser, kind: RecordKind, id: string) {
 async function assertMayApprove(user: SessionUser, stage: Stage | null) {
   if (!stage) throw new WorkflowError('No approval steps are set up for this report type — Admin → Approval matrix.', 409);
   if (!roleMayApprove(stage, user.role, await adminOverride())) {
-    throw new WorkflowError(`This step ("${stage.title}") is approved by the ${ROLE_LABELS[stage.role as Role] ?? stage.role} role.`, 403);
+    throw new WorkflowError(`This step ("${stage.title}") is approved by: ${await roleListLabel(stage.role)}.`, 403);
   }
 }
 
@@ -123,7 +125,7 @@ export async function approveRecord(user: SessionUser, kind: RecordKind, id: str
       }
     }
   } else {
-    await notifyEvent({ event: 'STAGE_APPROVED', kind, recordId: id, actor: user, roles: [stages[nextIdx].role], extraLines: [`Next step: "${stages[nextIdx].title}" (${stages[nextIdx].role})`] });
+    await notifyEvent({ event: 'STAGE_APPROVED', kind, recordId: id, actor: user, roles: roleSet(stages[nextIdx].role), extraLines: [`Next step: "${stages[nextIdx].title}" (${await roleListLabel(stages[nextIdx].role)})`] });
   }
   return { status: isFinal ? 'APPROVED' : 'SUBMITTED', stage: nextIdx, of: stages.length };
 }

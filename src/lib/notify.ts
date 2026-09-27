@@ -335,16 +335,59 @@ export async function notifyEvent(args: NotifyArgs): Promise<number> {
 }
 
 // Account emails go straight to one person regardless of routing rules.
-export async function sendAccountMail(user: { id: string; name: string; email: string | null; username: string }, kind: 'INVITE' | 'RESET', tempPassword: string, byName: string) {
+// INVITE = the welcome email on account creation; RESET = admin password reset.
+// baseUrl = the address the Admin is using right now, so the link works on the
+// plant LAN (the mail "app URL" setting wins when it has been filled in).
+export async function sendAccountMail(
+  user: { id: string; name: string; email: string | null; username: string },
+  kind: 'INVITE' | 'RESET',
+  tempPassword: string,
+  byName: string,
+  baseUrl?: string,
+) {
   if (!user.email) return;
-  const { appUrl } = await getMailConfig();
-  const headline = kind === 'INVITE' ? 'Your Hulas QC account is ready' : 'Your Hulas QC password was reset';
-  const lines = [
-    `Username: ${user.username}`,
-    `Temporary password: ${tempPassword}`,
-    `Sign in: ${appUrl}/login`,
+  const appUrlSetting = (await prisma.setting.findUnique({ where: { key: 'mail.appUrl' } }))?.value || process.env.APP_URL;
+  const loginUrl = `${(appUrlSetting || baseUrl || (await getMailConfig()).appUrl).replace(/\/+$/, '')}/login`;
+  const first = user.name.split(' ')[0];
+  const welcome = kind === 'INVITE';
+  const subject = welcome ? '[Hulas QC] Welcome to Hulas Khadya QC — your account is ready' : '[Hulas QC] Your password was reset';
+  const intro = welcome
+    ? `Namaste ${first}, welcome to Hulas Khadya QC — the app for raw material intake, product QC and daily production reports at Hulas Khadya Udhyog. ${byName} has created an account for you.`
+    : `Namaste ${first}, ${byName} has reset your Hulas Khadya QC password. Use the temporary password below to sign in.`;
+  const steps = [
+    `Open ${loginUrl}`,
+    `Sign in with username "${user.username}" and the temporary password above.`,
+    'You will be asked to choose your own password straight away (at least 8 characters, with letters and a number).',
+    ...(welcome ? ['Then open your profile and draw your signature once — it is used for every digital sign-off.'] : []),
   ];
-  const footer = `You will be asked to choose your own password on first sign-in. ${kind === 'INVITE' ? 'Account created' : 'Reset done'} by ${byName}.`;
-  const { text, html } = render(headline, null, lines, footer);
-  await enqueueMail({ event: kind === 'INVITE' ? 'USER_INVITE' : 'PASSWORD_RESET', userId: user.id, toEmail: user.email, toName: user.name, subject: `[Hulas QC] ${headline}`, bodyText: text, bodyHtml: html });
+  const text = [
+    welcome ? 'Welcome to Hulas Khadya QC' : 'Your password was reset',
+    '',
+    intro,
+    '',
+    `Login page:          ${loginUrl}`,
+    `Username:            ${user.username}`,
+    `Temporary password:  ${tempPassword}`,
+    '',
+    'How to sign in:',
+    ...steps.map((st, i) => `${i + 1}. ${st}`),
+    '',
+    'Keep this email private. If you did not expect it, tell your Admin.',
+  ].join('\n');
+  const html = `
+<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;color:#1c1917;line-height:1.55;max-width:600px">
+  <div style="font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:#78716c;margin-bottom:6px">Hulas Khadya QC</div>
+  <h2 style="margin:0 0 12px;font-size:20px">${welcome ? 'Welcome to Hulas Khadya QC 👋' : 'Your password was reset'}</h2>
+  <p>${esc(intro)}</p>
+  <table style="border-collapse:collapse;margin:14px 0;background:#f5f5f4;border-radius:8px">
+    <tr><td style="padding:8px 14px;color:#57534e">Login page</td><td style="padding:8px 14px"><a href="${esc(loginUrl)}">${esc(loginUrl)}</a></td></tr>
+    <tr><td style="padding:8px 14px;color:#57534e">Username</td><td style="padding:8px 14px;font-family:monospace;font-size:15px"><b>${esc(user.username)}</b></td></tr>
+    <tr><td style="padding:8px 14px;color:#57534e">Temporary password</td><td style="padding:8px 14px;font-family:monospace;font-size:15px"><b>${esc(tempPassword)}</b></td></tr>
+  </table>
+  <p style="margin-bottom:4px"><b>How to sign in</b></p>
+  <ol style="margin-top:0;padding-left:20px">${steps.map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
+  <p><a href="${esc(loginUrl)}" style="display:inline-block;background:#2e7d32;color:#fff;text-decoration:none;padding:9px 16px;border-radius:6px;font-weight:600">Sign in now</a></p>
+  <p style="font-size:12px;color:#a8a29e">Keep this email private. If you did not expect it, tell your Admin.</p>
+</div>`;
+  await enqueueMail({ event: welcome ? 'USER_INVITE' : 'PASSWORD_RESET', userId: user.id, toEmail: user.email, toName: user.name, subject, bodyText: text, bodyHtml: html });
 }

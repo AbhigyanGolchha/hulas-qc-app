@@ -42,6 +42,8 @@ export function ProductionForm({
   canApprove,
   canUnlock,
   sapEnabled = false,
+  canDelete = false,
+  canSubmit = true,
 }: {
   initial: ProductionFormData;
   packSizes: Pack[];
@@ -50,6 +52,8 @@ export function ProductionForm({
   canApprove: boolean;
   canUnlock: boolean;
   sapEnabled?: boolean;
+  canDelete?: boolean;
+  canSubmit?: boolean;
 }) {
   const [header, setHeader] = useState(initial.header);
   const [inputs, setInputs] = useState<InputRow[]>(initial.inputs.length ? initial.inputs : [emptyInput()]);
@@ -125,7 +129,7 @@ export function ProductionForm({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <WorkflowBar type="production" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} />
+        <WorkflowBar type="production" id={initial.id} status={initial.status} canApprove={canApprove} canUnlock={canUnlock} beforeSubmit={flushNow} sapEnabled={sapEnabled} canDelete={canDelete} canSubmit={canSubmit} />
         <SaveIndicator state={saveState} error={saveError} />
       </div>
 

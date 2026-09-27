@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { PageTitle, Card } from '@/components/ui';
 import { logAudit } from '@/lib/audit';
@@ -18,8 +18,7 @@ function isRedirect(e: unknown) {
 export const dynamic = 'force-dynamic';
 
 async function guard() {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN' && user.role !== 'MANAGER') redirect('/');
+  const user = await requirePermission('admin.sap');
   return user;
 }
 

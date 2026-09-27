@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePermission } from '@/lib/auth';
 import { Shell } from '@/components/shell';
+import { DualDateField } from '@/components/dual-date-input';
 import { PageTitle, Card } from '@/components/ui';
 import { nextReportNo, suggestBatchNo, claimBatchSeq } from '@/lib/numbering';
 import { adToBs, todayKathmandu } from '@/lib/dates';
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 async function createQc(formData: FormData) {
   'use server';
-  const user = await requireUser();
+  const user = await requirePermission('qc.edit');
   const productId = String(formData.get('productId'));
   const dateAd = String(formData.get('dateAd') || todayKathmandu());
   const batchChoice = String(formData.get('batchId') || '');
@@ -67,7 +68,7 @@ async function createQc(formData: FormData) {
 }
 
 export default async function NewQc({ searchParams }: { searchParams: { batch?: string } }) {
-  const user = await requireUser();
+  const user = await requirePermission('qc.edit');
   const [products, batches] = await Promise.all([
     prisma.product.findMany({
       where: { active: true, hasQcSheet: true },
@@ -106,10 +107,10 @@ export default async function NewQc({ searchParams }: { searchParams: { batch?: 
             <span className="mb-1 block font-medium">New batch no. (optional override)</span>
             <input name="newBatchNo" className="field" placeholder="e.g. RFM-200" />
           </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium">Date (AD)</span>
-            <input type="date" name="dateAd" defaultValue={todayKathmandu()} className="field" />
-          </label>
+          <div className="block text-sm">
+            <span className="mb-1 block font-medium">Date (AD ↔ BS — type either one)</span>
+            <DualDateField name="dateAd" defaultAd={todayKathmandu()} />
+          </div>
           <button className="btn-primary">Create QC sheet</button>
         </form>
       </Card>

@@ -3,6 +3,8 @@ import { formatAdLong, formatMiti, fmtNpt } from '@/lib/dates';
 export function PrintHeader({ title, companyName, sub }: { title: string; companyName: string; sub?: string }) {
   return (
     <header className="mb-3 border-b-2 border-black pb-2 text-center">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/hku-logo.png" alt="Hulas Khadya Udhyog" className="mx-auto mb-1 h-14 w-auto" />
       <div className="text-lg font-bold uppercase tracking-wide">{companyName}</div>
       <div className="text-xs">Nepalgunj, Nepal</div>
       <div className="mt-1 text-base font-bold underline">{title}</div>
