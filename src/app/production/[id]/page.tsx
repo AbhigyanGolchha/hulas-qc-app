@@ -7,8 +7,7 @@ import { PageTitle } from '@/components/ui';
 import { ProductionForm, type ProductionFormData } from '@/components/production-form';
 import { SignoffPanel } from '@/components/signoff-panel';
 import { slotViews } from '@/lib/sign';
-import { canApprove, canUnlock } from '@/lib/constants';
-import { canApproveNow } from '@/lib/approval';
+import { canApproveNow, canUnlockNow } from '@/lib/approval';
 import { adIso, formatMiti } from '@/lib/dates';
 import { parsePacked, kgToUnits, lotConsumedKg } from '@/lib/calc';
 import { isSapEnabled } from '@/lib/connector';
@@ -136,12 +135,12 @@ export default async function ProductionPage({ params }: { params: { id: string 
         packSizes={packSizes}
         intakeOptions={intakeOptions}
         suppliers={suppliers.map((x) => x.name)}
-        canApprove={canApprove(user.role)}
-        canUnlock={canUnlock(user.role)}
+        canApprove={await canApproveNow('production', r.approvalStage, user.role)}
+        canUnlock={await canUnlockNow('production', user.role)}
         sapEnabled={await isSapEnabled()}
       />
       <div className="mt-5">
-        <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={canUnlock(user.role)} />
+        <SignoffPanel type="production" id={r.id} status={r.status} slots={slots} userHasSignature={Boolean(me?.signatureData)} canApprove={await canApproveNow('production', r.approvalStage, user.role)} currentUserId={user.id} canRemoveAny={await canUnlockNow('production', user.role)} />
       </div>
     </Shell>
   );

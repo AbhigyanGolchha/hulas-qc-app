@@ -27,7 +27,7 @@ export default async function AdminHome() {
     { href: '/admin/notifications', title: 'Notifications (email)', desc: `${isMailConfigured(mailCfg) ? 'Email is ON' : 'Email is OFF — set up SMTP'}${mailFailed ? ` · ${mailFailed} failed` : ''}. Who gets told about submits, approvals, rejections, QC fails, yield warnings.` },
     { href: '/admin/specs', title: 'Parameters & spec limits', desc: `${params} parameters across all templates. Edits are versioned — old reports keep the spec in force when tested.` },
     { href: '/admin/master', title: 'Master data', desc: `Mills & yield bands, products & shelf life, suppliers (${suppliers}), pack sizes.` },
-    { href: '/admin/approvals', title: 'Approval flow', desc: 'Who signs off before a report is final — single approval or a multi-step chain per report type.' },
+    { href: '/admin/approvals', title: 'Approval matrix', desc: 'Per report type: who signs off, who approves in which order, who may unlock — nothing is built in.' },
     { href: '/admin/audit', title: 'Audit log', desc: 'Every sign-in, submit, approval, unlock, signature and post-submission edit: who, when, old → new.' },
     ...(sapOn
       ? [

@@ -65,7 +65,7 @@ export function IntakeForm({
   suppliers: { id: string; name: string }[];
   canApprove: boolean;
   canUnlock: boolean;
-  canDecide: boolean; // approver of the current stage (or Manager/Admin) — only they set the Decision
+  canDecide: boolean; // approver of the step it is waiting on (approval matrix) — only they set the Decision
   decider: string; // who does, in words, for everyone else
   sapEnabled?: boolean;
 }) {

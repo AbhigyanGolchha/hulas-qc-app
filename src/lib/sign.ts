@@ -1,34 +1,23 @@
 // Digital sign-offs. Each record type has named signature slots (mirroring
-// the paper forms). Preparer slots ("Godown Keeper", "Quality Controller", …)
-// are master data — Admin → Approval flow — each bound to the role whose users
-// may sign it; nobody else gets a button, and the API refuses them too.
-// Submit auto-signs the submitter's own slot. Approver slots are only ever
-// filled by the Approve action. Unlock voids every signature — edits after
-// signing must be re-signed, and the audit log keeps the trail.
+// the paper forms), all set by the Admin in Admin → Approval matrix:
+//  • sign-off slots ("Godown Keeper", "Quality Controller", …) — each bound to
+//    one role; only users with that role get a button and the API refuses
+//    everyone else (Admins included). Submit auto-signs the submitter's slot.
+//  • approval-step slots — one per approval step, filled only by Approve.
+// Nothing here names a slot or a role; they come from the database.
+// Unlock voids every signature — edits after signing must be re-signed, and
+// the audit log keeps the trail.
 import { prisma } from './db';
 import type { SessionUser } from './auth';
 import { logAudit } from './audit';
-import { canUnlock, ROLE_LABELS, type Role } from './constants';
+import { ROLE_LABELS, type Role } from './constants';
+import { canUnlockNow, getStages, type RecordKind } from './approval';
 
-export type RecordKind = 'intake' | 'qc' | 'production';
+export type { RecordKind };
 
-// A preparer slot: its title (what prints under the signature) and the role
+// A sign-off slot: its title (what prints under the signature) and the role
 // allowed to sign it. 'ANY' = anyone who can edit the record.
 export type SlotDef = { title: string; role: string };
-
-export const SLOTS: Record<RecordKind, { approver: string }> = {
-  intake: { approver: 'Manager' },
-  qc: { approver: 'Approved by (GM)' },
-  production: { approver: 'Approved by' },
-};
-
-// What a fresh install starts with. Once the admin edits a record type's slots
-// they live in the Setting table (key below) and these no longer apply to it.
-export const DEFAULT_PREPARERS: Record<RecordKind, SlotDef[]> = {
-  intake: [{ title: 'Godown Keeper', role: 'GODOWN' }, { title: 'Quality Controller', role: 'QC' }],
-  qc: [{ title: 'Checked by', role: 'ANY' }],
-  production: [{ title: 'Prepared by', role: 'ANY' }],
-};
 
 const SLOTS_KEY = 'signoff.slots';
 
@@ -39,10 +28,10 @@ export async function getPreparerSlots(kind: RecordKind): Promise<SlotDef[]> {
       const all = JSON.parse(row.value);
       if (Array.isArray(all?.[kind])) return all[kind];
     } catch {
-      // unreadable setting — fall back to the defaults below
+      // unreadable setting — treated as no sign-off slots
     }
   }
-  return DEFAULT_PREPARERS[kind];
+  return [];
 }
 
 export async function savePreparerSlots(kind: RecordKind, slots: SlotDef[]) {
@@ -74,7 +63,9 @@ export async function defaultSlot(kind: RecordKind, role: string): Promise<strin
   return (slots.find((s) => s.role === role) ?? slots.find((s) => s.role === 'ANY'))?.title ?? null;
 }
 
-// keep the legacy name columns in step so lists, CSV and SAP payloads agree
+// Mirror signatures into the old name columns (lists, CSV, SAP payload) for
+// slots that existed before sign-offs were configurable. Display only — no
+// permission depends on this.
 const LEGACY_FIELD: Record<string, string | null> = {
   'intake:Godown Keeper': 'godownKeeper',
   'intake:Quality Controller': 'checkedBy',
@@ -89,8 +80,7 @@ function modelFor(kind: RecordKind) {
 // viaApproval: the Approve action signing its own stage slot. Every other
 // caller may only sign preparer slots, and only with the slot's role.
 export async function signRecord(user: SessionUser, kind: RecordKind, recordId: string, slot: string, opts: { viaApproval?: boolean } = {}) {
-  const stageTitles = (await prisma.approvalStage.findMany({ where: { recordType: kind.toUpperCase() } })).map((s) => s.title);
-  const approverSlots = [SLOTS[kind].approver, ...stageTitles];
+  const approverSlots = (await getStages(kind)).map((s) => s.title);
   const preparer = (await getPreparerSlots(kind)).find((s) => s.title === slot);
   if (opts.viaApproval) {
     if (!approverSlots.includes(slot)) throw new Error(`Unknown approval slot "${slot}"`);
@@ -119,19 +109,19 @@ export async function signRecord(user: SessionUser, kind: RecordKind, recordId: 
 }
 
 // Withdraw one signature while the record is still editable. The person who
-// signed may remove their own; a Manager/Admin may remove anyone's (audited
-// either way). Approver slots are never removed this way — that is what
+// signed may remove their own; the unlock roles from the approval matrix may
+// remove anyone's (audited either way). Approver slots are never removed this way — that is what
 // Reject and Unlock are for, because they also roll the approval state back.
 export async function unsignRecord(user: SessionUser, kind: RecordKind, recordId: string, slot: string) {
   const recordType = kind.toUpperCase();
-  const stageTitles = (await prisma.approvalStage.findMany({ where: { recordType } })).map((s) => s.title);
-  if (slot === SLOTS[kind].approver || stageTitles.includes(slot)) {
+  const stageTitles = (await getStages(kind)).map((s) => s.title);
+  if (stageTitles.includes(slot)) {
     throw new Error('Approval signatures are removed by Reject or Unlock, not here.');
   }
   const sig = await prisma.signature.findUnique({ where: { recordType_recordId_slot: { recordType, recordId, slot } } });
   if (!sig) return;
-  if (sig.userId !== user.id && !canUnlock(user.role)) {
-    throw new Error('Only the person who signed (or a Manager/Admin) can remove this signature.');
+  if (sig.userId !== user.id && !(await canUnlockNow(kind, user.role))) {
+    throw new Error('Only the person who signed (or someone allowed to unlock these reports) can remove this signature.');
   }
   await prisma.signature.delete({ where: { id: sig.id } });
   const legacy = LEGACY_FIELD[`${kind}:${slot}`];
@@ -157,11 +147,9 @@ export async function getSignatures(kind: RecordKind, recordId: string) {
 }
 
 // slot list + current signatures, shaped for the SignoffPanel component.
-// Approver slots come from the configured approval chain (Admin → Approval
-// flow); with no chain configured this is the single built-in approver slot.
+// Approver slots are the approval steps from Admin → Approval matrix.
 export async function slotViews(kind: RecordKind, recordId: string, viewerRole?: string) {
-  const stages = await prisma.approvalStage.findMany({ where: { recordType: kind.toUpperCase() }, orderBy: { order: 'asc' } });
-  const approverSlots = stages.length ? stages.map((s) => s.title) : [SLOTS[kind].approver];
+  const approverSlots = (await getStages(kind)).map((s) => s.title);
   // @ts-expect-error dynamic model union
   const rec = await modelFor(kind).findUnique({ where: { id: recordId }, select: { approvalStage: true } });
   const done = rec?.approvalStage ?? 0;
@@ -184,7 +172,7 @@ export async function slotViews(kind: RecordKind, recordId: string, viewerRole?:
       eligibleNames: p.role === 'ANY' ? [] : eligible.filter((u) => u.role === p.role).map((u) => u.name),
       canSign: viewerRole ? roleMaySign(p, viewerRole) : false,
     })),
-    ...approverSlots.map((slot, i) => ({ slot, isApprover: true, isCurrentStage: i === done, signerRole: null, eligibleNames: [] as string[], canSign: false })),
+    ...approverSlots.map((slot, i) => ({ slot, isApprover: true, isCurrentStage: i === Math.min(done, approverSlots.length - 1), signerRole: null, eligibleNames: [] as string[], canSign: false })),
   ].map((base) => {
     const s = bySlot.get(base.slot);
     return {
@@ -197,20 +185,19 @@ export async function slotViews(kind: RecordKind, recordId: string, viewerRole?:
   });
 }
 
-// declared print slots (preparers + the built-in approver) with legacy name
-// fallbacks; extra approval-stage signatures are appended by toPrintSigns
+// declared print slots: sign-off slots, then the approval steps. Records
+// approved before digital signatures show the old approvedBy name on the last step.
 export async function printSlots(
   kind: RecordKind,
   legacy: Record<string, string | null | undefined>,
   approver: { name: string | null; at: Date | null },
 ) {
   const preparers = await getPreparerSlots(kind);
-  const stages = await prisma.approvalStage.findMany({ where: { recordType: kind.toUpperCase() }, orderBy: { order: 'asc' } });
+  const stages = await getStages(kind);
   return [
     ...preparers.map((p) => ({ slot: p.title, legacyName: legacy[p.title] ?? null })),
-    // a configured chain prints its own stage slots; otherwise the built-in approver
-    ...(stages.length
-      ? stages.map((st) => ({ slot: st.title, legacyName: null as string | null }))
-      : [{ slot: SLOTS[kind].approver, legacyName: approver.name, legacyAt: approver.at }]),
+    ...stages.map((st, i) => (i === stages.length - 1
+      ? { slot: st.title, legacyName: approver.name, legacyAt: approver.at }
+      : { slot: st.title, legacyName: null as string | null })),
   ];
 }

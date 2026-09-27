@@ -122,7 +122,7 @@ async function saveIntake(id: string, body: any, user: any) {
     const incoming = (parse as (v: unknown) => unknown)(h[key]);
     if (mayDecide) decisionData[key] = incoming;
     else if (incoming !== (before as any)[key]) {
-      throw new WorkflowError('Only the approver (or a Manager) can set the Decision and deductions on an intake report.', 403);
+      throw new WorkflowError('Only the approver of the step this report is waiting on can set the Decision and deductions.', 403);
     }
   }
   const data = {
@@ -203,12 +203,12 @@ async function saveQc(id: string, body: any, user: any) {
 
   const suggested = suggestOverall(statuses as any);
   const overallOverridden = Boolean(h.overallOverridden);
-  // overriding the computed PASS/FAIL is a Manager/Admin call — the form hides
-  // the switch from others, and the API refuses it too
-  if (user.role !== 'MANAGER' && user.role !== 'ADMIN') {
+  // overriding the computed PASS/FAIL is the current approver's call (approval
+  // matrix) — the form hides the switch from others, and the API refuses it too
+  if (!(await canSetDecision('qc', before, user.role))) {
     const changed = overallOverridden !== before.overallOverridden
       || (overallOverridden && str(h.overallResult) !== before.overallResult);
-    if (changed) throw new WorkflowError('Only a Manager can override the overall PASS/FAIL result.', 403);
+    if (changed) throw new WorkflowError('Only the approver of the step this sheet is waiting on can override the overall PASS/FAIL result.', 403);
   }
   const after = await prisma.qcReport.update({
     where: { id },

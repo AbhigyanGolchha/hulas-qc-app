@@ -4,10 +4,10 @@
 import { prisma } from './db';
 import type { SessionUser } from './auth';
 import { logAudit } from './audit';
-import { canApprove, canUnlock } from './constants';
+import { ROLE_LABELS, type Role } from './constants';
 import { exportToOutbox } from './sap';
-import { signRecord, voidSignatures, defaultSlot, SLOTS, type RecordKind } from './sign';
-import { getStages, currentStage, roleMayApprove } from './approval';
+import { signRecord, voidSignatures, defaultSlot, type RecordKind } from './sign';
+import { getStages, currentStage, roleMayApprove, adminOverride, canUnlockNow, type Stage } from './approval';
 import { notifyEvent } from './notify';
 import { checkYields, parsePacked, rowTotalKg, lotConsumedKg, fmtKg, countsInOutput } from './calc';
 
@@ -41,6 +41,8 @@ export async function submitRecord(user: SessionUser, kind: RecordKind, id: stri
   if (!EDITABLE.includes(rec.status)) throw new WorkflowError('Record is not editable');
   const missing = await validateForSubmit(kind, id);
   if (missing.length) throw new WorkflowError('missing', 422, missing);
+  const stages = await getStages(kind);
+  if (!stages.length) throw new WorkflowError('No approval steps are set up for this report type yet — an Admin adds them in Admin → Approval matrix.', 409);
   // @ts-expect-error dynamic model union
   await modelFor(kind).update({ where: { id }, data: { status: 'SUBMITTED', approvalStage: 0 } });
   // submitting IS signing: the submitter's e-signature lands in the slot bound
@@ -50,8 +52,7 @@ export async function submitRecord(user: SessionUser, kind: RecordKind, id: stri
   await logAudit(user, kind.toUpperCase(), id, 'SUBMIT');
 
   // tell the first approver, plus any module-specific alarms
-  const stages = await getStages(kind);
-  await notifyEvent({ event: 'SUBMITTED', kind, recordId: id, actor: user, roles: [stages[0]?.role ?? 'MANAGER'] });
+  await notifyEvent({ event: 'SUBMITTED', kind, recordId: id, actor: user, roles: [stages[0].role] });
   await moduleAlarms(user, kind, id);
   return { status: 'SUBMITTED' };
 }
@@ -73,15 +74,20 @@ async function moduleAlarms(user: SessionUser, kind: RecordKind, id: string) {
 
 // ---------- approve / reject ----------
 
+// the step's role from the approval matrix (or an Admin, if step-in is switched on)
+async function assertMayApprove(user: SessionUser, stage: Stage | null) {
+  if (!stage) throw new WorkflowError('No approval steps are set up for this report type — Admin → Approval matrix.', 409);
+  if (!roleMayApprove(stage, user.role, await adminOverride())) {
+    throw new WorkflowError(`This step ("${stage.title}") is approved by the ${ROLE_LABELS[stage.role as Role] ?? stage.role} role.`, 403);
+  }
+}
+
 export async function approveRecord(user: SessionUser, kind: RecordKind, id: string) {
   const rec = await loadRecord(kind, id);
   if (rec.status !== 'SUBMITTED') throw new WorkflowError('Only submitted records can be approved/rejected');
   const stages = await getStages(kind);
   const stage = currentStage(stages, rec.approvalStage ?? 0);
-  // orphaned mid-flow record (chain was shortened): managers may finish it
-  if (stage ? !roleMayApprove(stage, user.role) : !canApprove(user.role)) {
-    throw new WorkflowError(`This step is for the ${stage?.role ?? 'MANAGER'} role ("${stage?.title ?? 'approver'}")`, 403);
-  }
+  await assertMayApprove(user, stage);
   if (kind === 'production') {
     const over = await lotOverAllocations(id);
     if (over.length) throw new WorkflowError(`Before approving: ${over.join('; ')}.`, 422);
@@ -93,7 +99,7 @@ export async function approveRecord(user: SessionUser, kind: RecordKind, id: str
     if (problems.length) throw new WorkflowError(`Before approving: ${problems.join('; ')}.`, 422);
   }
   // sign this stage's slot, then either advance or finish
-  await signRecord(user, kind, id, stage?.title ?? SLOTS[kind].approver, { viaApproval: true });
+  await signRecord(user, kind, id, stage!.title, { viaApproval: true });
   const nextIdx = (rec.approvalStage ?? 0) + 1;
   const isFinal = nextIdx >= stages.length;
   // @ts-expect-error dynamic model union
@@ -127,9 +133,7 @@ export async function rejectRecord(user: SessionUser, kind: RecordKind, id: stri
   if (rec.status !== 'SUBMITTED') throw new WorkflowError('Only submitted records can be approved/rejected');
   const stages = await getStages(kind);
   const stage = currentStage(stages, rec.approvalStage ?? 0);
-  if (stage ? !roleMayApprove(stage, user.role) : !canApprove(user.role)) {
-    throw new WorkflowError(`This step is for the ${stage?.role ?? 'MANAGER'} role ("${stage?.title ?? 'approver'}")`, 403);
-  }
+  await assertMayApprove(user, stage);
   if (!reason?.trim()) throw new WorkflowError('A rejection reason is required', 422);
   // @ts-expect-error dynamic model union
   await modelFor(kind).update({ where: { id }, data: { status: 'REJECTED', approvalStage: 0 } });
@@ -144,7 +148,7 @@ export async function rejectRecord(user: SessionUser, kind: RecordKind, id: stri
 
 export async function unlockRecord(user: SessionUser, kind: RecordKind, id: string, reason: string | undefined) {
   const rec = await loadRecord(kind, id);
-  if (!canUnlock(user.role)) throw new WorkflowError('Only a Manager or Admin can unlock', 403);
+  if (!(await canUnlockNow(kind, user.role))) throw new WorkflowError('Your role is not allowed to unlock these reports (Admin → Approval matrix).', 403);
   if (rec.status !== 'APPROVED') throw new WorkflowError('Only approved records can be unlocked');
   // the notification needs the signer list BEFORE it is voided
   await notifyEvent({ event: 'UNLOCKED', kind, recordId: id, actor: user, reason });

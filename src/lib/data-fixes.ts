@@ -84,6 +84,48 @@ const FIXES: Fix[] = [
       return `${changed} spec(s) versioned, ${repinned} open report result(s) re-evaluated`;
     },
   },
+  {
+    // Approval matrix (Sep 2026): nothing about sign-offs / approvals is built
+    // into the code any more. Write what the app used to do implicitly into the
+    // database once, as ordinary editable data; anything the Admin already set
+    // up is left exactly as it is.
+    id: '2026-09-approval-matrix-seed',
+    describe: 'Approval matrix written into the database (was built into the code)',
+    run: async () => {
+      const done: string[] = [];
+      const slotsRow = await prisma.setting.findUnique({ where: { key: 'signoff.slots' } });
+      let slots: Record<string, unknown> = {};
+      try { slots = slotsRow ? JSON.parse(slotsRow.value) : {}; } catch { slots = {}; }
+      const legacySlots: Record<string, { title: string; role: string }[]> = {
+        intake: [{ title: 'Godown Keeper', role: 'GODOWN' }, { title: 'Quality Controller', role: 'QC' }],
+        qc: [{ title: 'Checked by', role: 'ANY' }],
+        production: [{ title: 'Prepared by', role: 'ANY' }],
+      };
+      for (const kind of Object.keys(legacySlots)) {
+        if (!Array.isArray(slots[kind])) { slots[kind] = legacySlots[kind]; done.push(`${kind} sign-off slots`); }
+      }
+      await prisma.setting.upsert({ where: { key: 'signoff.slots' }, create: { key: 'signoff.slots', value: JSON.stringify(slots) }, update: { value: JSON.stringify(slots) } });
+
+      const legacyApprover: Record<string, string> = { INTAKE: 'Manager', QC: 'Approved by (GM)', PRODUCTION: 'Approved by' };
+      for (const [recordType, title] of Object.entries(legacyApprover)) {
+        if (!(await prisma.approvalStage.count({ where: { recordType } }))) {
+          await prisma.approvalStage.create({ data: { recordType, order: 1, title, role: 'MANAGER' } });
+          done.push(`${recordType.toLowerCase()} approval step "${title}"`);
+        }
+      }
+
+      const unlockRow = await prisma.setting.findUnique({ where: { key: 'approval.unlock' } });
+      if (!unlockRow) {
+        await prisma.setting.create({ data: { key: 'approval.unlock', value: JSON.stringify({ intake: ['MANAGER'], qc: ['MANAGER'], production: ['MANAGER'] }) } });
+        done.push('unlock roles');
+      }
+      if (!(await prisma.setting.findUnique({ where: { key: 'approval.adminOverride' } }))) {
+        await prisma.setting.create({ data: { key: 'approval.adminOverride', value: 'on' } });
+        done.push('admin step-in on');
+      }
+      return done.length ? done.join(', ') : 'already configured';
+    },
+  },
 ];
 
 export async function runDataFixes() {

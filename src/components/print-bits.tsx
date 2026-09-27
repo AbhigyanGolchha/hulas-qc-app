@@ -53,7 +53,7 @@ export function SignRow({ signs }: { signs: PrintSign[] }) {
 
 // map Signature rows to the print slots, with legacy name-field fallback.
 // Signatures in slots the form didn't declare (extra approval stages from
-// Admin → Approval flow) are appended so multi-step sign-offs always print.
+// Admin → Approval matrix) are appended so multi-step sign-offs always print.
 export function toPrintSigns(
   slots: { slot: string; legacyName?: string | null; legacyAt?: Date | null }[],
   signatures: { slot: string; userName: string; imageData: string | null; signedAt: Date }[],

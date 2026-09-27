@@ -1,7 +1,7 @@
 'use client';
 // Digital sign-off panel shown on every record page. Each slot mirrors a
 // signature line on the old paper form and belongs to one role (Admin →
-// Approval flow). Submitting signs the submitter's own slot automatically;
+// Approval matrix). Submitting signs the submitter's own slot automatically;
 // this panel lets the other role-holders co-sign (only they get the button),
 // lets a signer take their signature back while the record is still
 // editable, and shows everyone what's signed. Approver slots fill only via Approve.
@@ -41,7 +41,7 @@ export function SignoffPanel({
   userHasSignature: boolean;
   canApprove?: boolean;
   currentUserId?: string;
-  canRemoveAny?: boolean; // Manager/Admin may remove anyone's preparer signature
+  canRemoveAny?: boolean; // unlock roles (approval matrix) may remove anyone's sign-off
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);

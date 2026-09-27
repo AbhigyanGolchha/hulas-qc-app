@@ -5,7 +5,6 @@ import { requireUser } from '@/lib/auth';
 import { Shell } from '@/components/shell';
 import { Card, PassFailBadge, DualDate } from '@/components/ui';
 import { LineChart, ParetoBars, StatTile } from '@/components/charts';
-import { canApprove } from '@/lib/constants';
 import { adIso, adToBs, formatMiti, mitiShort, todayKathmandu, addDays } from '@/lib/dates';
 import { parsePacked, rowTotalKg, round2, shiftMinutes, efficiencyPct } from '@/lib/calc';
 import { approveRecord, WorkflowError } from '@/lib/workflow';
@@ -133,7 +132,7 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
   }
   const scorecard = [...bySupplier.values()].sort((a, b) => b.lots - a.lots);
 
-  const isManager = canApprove(user.role);
+  const isApprover = approvable.size > 0;
   const qs = (patch: Record<string, string>) => {
     const p = new URLSearchParams({ from, to, mill: millFilter, tp: trendProduct?.id ?? '', pp: trendParam?.id ?? '', ...patch });
     return `/?${p.toString()}`;
@@ -204,8 +203,8 @@ export default async function Home({ searchParams }: { searchParams: Record<stri
               </li>
             ))}
           </ul>
-          {!isManager && approvable.size === 0 && <p className="mt-2 text-xs text-stone-400">Nothing here is waiting on your role — this list is read-only for you.</p>}
-          {isManager && <p className="mt-2 text-xs text-stone-400">Approve here signs the approval slot exactly like the button on the record page. Open the record to reject with a reason.</p>}
+          {!isApprover && <p className="mt-2 text-xs text-stone-400">Nothing here is waiting on your role — this list is read-only for you.</p>}
+          {isApprover && <p className="mt-2 text-xs text-stone-400">Approve here signs the approval slot exactly like the button on the record page. Open the record to reject with a reason.</p>}
         </Card>
       )}
 

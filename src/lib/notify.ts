@@ -22,7 +22,7 @@ export type EventKey =
 export const EVENTS: Record<EventKey, { label: string; hint: string; defaultRoles: string[]; involved: boolean }> = {
   SUBMITTED: {
     label: 'Report submitted for approval',
-    hint: 'Sent to the role that must approve the current step (from Admin → Approval flow). Supervisors only get their own mill.',
+    hint: 'Sent to the role that must approve the current step (from Admin → Approval matrix). Supervisors only get their own mill.',
     defaultRoles: ['MANAGER'],
     involved: false,
   },
@@ -274,7 +274,7 @@ export async function notifyEvent(args: NotifyArgs): Promise<number> {
       case 'APPROVED':
         headline = `${actorName} approved the ${kindLabel}`;
         subject = `[Hulas QC] ${rec?.reportNo} approved`;
-        footer = 'The record is now sealed (read-only until a Manager unlocks it).';
+        footer = 'The record is now sealed (read-only unless someone allowed to unlock reopens it).';
         break;
       case 'REJECTED':
         headline = `${actorName} rejected the ${kindLabel}`;
