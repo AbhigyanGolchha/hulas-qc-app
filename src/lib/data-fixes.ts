@@ -4,7 +4,7 @@
 // Each fix runs once: a Setting row `datafix.<id>` records it, so if an admin
 // later changes the same thing in the UI, a restart never overrides them.
 import { prisma } from './db';
-import { suggestOverall, type EvalStatus } from './spec';
+import { evaluate, suggestOverall, type EvalStatus } from './spec';
 
 type Fix = { id: string; describe: string; run: () => Promise<string> };
 
@@ -209,6 +209,145 @@ const FIXES: Fix[] = [
       const hits = params.filter((p) => /first\s*break\s*moisture/i.test(p.name));
       for (const p of hits) await prisma.parameter.update({ where: { id: p.id }, data: { hasIr: true } });
       return `${hits.length} parameter(s) updated`;
+    },
+  },
+  {
+    // QC lab (Poonam, Oct 2026): the Maida granularity spec for the 118 µm
+    // sieve is 97.7–100 g/100 g. The old 99.7–100 band was unachievable next
+    // to ">118µ = 1–4" (which is why Sep made it record-only); the corrected
+    // band is achievable, so it evaluates PASS/FAIL again.
+    id: '2026-10-maida-118-band',
+    describe: 'Granularity <118µ spec → 97.7–100 g/100 g (evaluates again)',
+    run: async () => {
+      const params = await prisma.parameter.findMany({
+        where: { name: { startsWith: 'Granularity <118' } },
+        include: { specVersions: { orderBy: { version: 'desc' }, take: 1 } },
+      });
+      let changed = 0, repinned = 0;
+      for (const p of params) {
+        const cur = p.specVersions[0];
+        if (!cur) continue;
+        if (cur.operator === 'RANGE' && cur.min === 97.7 && cur.max === 100) continue;
+        const next = await prisma.specVersion.create({
+          data: {
+            parameterId: p.id,
+            version: cur.version + 1,
+            operator: 'RANGE',
+            min: 97.7,
+            max: 100,
+            displayText: '<118µ = 97.7–100 g/100 g',
+            sourceTag: 'INTERNAL',
+            regulatoryRef: cur.regulatoryRef,
+            note: 'Band corrected to 97.7–100 g/100 g per QC lab (Poonam Gupta, Oct 2026); auto-evaluation restored.',
+            createdBy: 'system (QC lab Oct 2026)',
+          },
+        });
+        changed++;
+        // reports still being worked on move to the new version; approved ones keep theirs
+        const open = await prisma.qcResult.findMany({
+          where: { parameterId: p.id, report: { status: { in: ['DRAFT', 'SUBMITTED', 'REJECTED'] } } },
+          include: { parameter: true },
+        });
+        for (const res of open) {
+          const evalStatus = evaluate(next, res.parameter.valueType, res.resultNum, res.resultText);
+          await prisma.qcResult.update({ where: { id: res.id }, data: { specVersionId: next.id, evalStatus } });
+          const report = await prisma.qcReport.findUniqueOrThrow({ where: { id: res.reportId }, include: { results: true } });
+          if (!report.overallOverridden) {
+            const suggested = suggestOverall(report.results.map((x) => x.evalStatus as EvalStatus));
+            await prisma.qcReport.update({ where: { id: report.id }, data: { overallResult: suggested } });
+          }
+          repinned++;
+        }
+      }
+      return `${changed} spec(s) versioned, ${repinned} open report result(s) re-evaluated`;
+    },
+  },
+  {
+    // QC lab (Poonam, Oct 2026): every material's spot analysis gets a Texture
+    // row and an Appearance / Smell row with the full option set. Existing
+    // parameters keep their spec and admin-edited options — missing choices are
+    // appended, never removed. "Other (see note)" + the Note column carry
+    // free-text observations; the intake form also accepts typed observations
+    // directly in these cells now.
+    id: '2026-10-texture-appearance-all-materials',
+    describe: 'Texture + Appearance/Smell on every material, full option lists',
+    run: async () => {
+      const TEXTURE_OPTIONS = ['Hard', 'Semi-hard', 'Normal', 'Medium', 'Soft', 'Brittle', 'Other (see note)'];
+      const APPEARANCE_OPTIONS = ['Normal', 'Bright, Clean, Uniform', 'Dull', 'Discoloured', 'Off-odour', 'Musty', 'Rancid', 'Insect-infested', 'Other (see note)'];
+      const done: string[] = [];
+      const materials = await prisma.material.findMany({ where: { active: true } });
+      for (const m of materials) {
+        const params = await prisma.parameter.findMany({ where: { materialId: m.id } });
+        const mergeOptions = async (p: (typeof params)[number], baseline: string[]) => {
+          let options: string[] = [];
+          try { options = p.options ? JSON.parse(p.options) : []; } catch { options = []; }
+          const has = (v: string) => options.some((o) => o.trim().toLowerCase() === v.trim().toLowerCase());
+          const next = [...options, ...baseline.filter((b) => !has(b))];
+          if (next.length !== options.length || !p.active) {
+            await prisma.parameter.update({ where: { id: p.id }, data: { options: JSON.stringify(next), active: true } });
+            return true;
+          }
+          return false;
+        };
+        const nextSort = params.length ? Math.max(...params.map((x) => x.sortOrder)) + 1 : 1;
+
+        const texture = params.find((p) => /texture/i.test(p.name));
+        if (texture) {
+          if (await mergeOptions(texture, TEXTURE_OPTIONS)) done.push(`${m.name} texture options`);
+        } else {
+          const p = await prisma.parameter.create({
+            data: { materialId: m.id, name: 'Texture', valueType: 'SELECT', options: JSON.stringify(TEXTURE_OPTIONS), sortOrder: nextSort },
+          });
+          await prisma.specVersion.create({
+            data: { parameterId: p.id, version: 1, operator: 'RECORD', displayText: 'record texture (pick or type observation)', sourceTag: 'INTERNAL', createdBy: 'system (QC lab Oct 2026)' },
+          });
+          done.push(`${m.name} texture added`);
+        }
+
+        const appearance = params.find((p) => /appearance/i.test(p.name));
+        if (appearance) {
+          if (await mergeOptions(appearance, APPEARANCE_OPTIONS)) done.push(`${m.name} appearance options`);
+        } else {
+          const p = await prisma.parameter.create({
+            data: { materialId: m.id, name: 'Appearance / Smell', valueType: 'SELECT', options: JSON.stringify(APPEARANCE_OPTIONS), sortOrder: nextSort + 1 },
+          });
+          await prisma.specVersion.create({
+            data: { parameterId: p.id, version: 1, operator: 'TEXT_MATCH', textExpected: 'Normal', displayText: 'normal — no off-odour, must or infestation', sourceTag: 'INTERNAL', createdBy: 'system (QC lab Oct 2026)' },
+          });
+          done.push(`${m.name} appearance/smell added`);
+        }
+      }
+      return done.length ? done.join(', ') : 'already in place';
+    },
+  },
+  {
+    // QC lab (Poonam, Oct 2026): roasted chiura has its own moisture spec,
+    // 7–9%, missing from the Chiura lab report until now. Added to every
+    // Chiura grade's QC sheet right under the plain moisture row.
+    id: '2026-10-chiura-roasted-moisture',
+    describe: 'Chiura QC sheets get "Moisture Content — roasted" (7–9%)',
+    run: async () => {
+      const products = await prisma.product.findMany({ where: { hasQcSheet: true, active: true } });
+      const chiura = products.filter((p) => /ch[iu]+ra/i.test(p.name));
+      let added = 0;
+      for (const cp of chiura) {
+        const params = await prisma.parameter.findMany({ where: { productId: cp.id }, orderBy: { sortOrder: 'asc' } });
+        if (params.some((p) => /roast/i.test(p.name))) continue;
+        const moisture = params.find((p) => /^moisture/i.test(p.name));
+        const insertAt = moisture ? moisture.sortOrder + 1 : 1;
+        // shift everything at/after the slot down by one
+        for (const p of params.filter((x) => x.sortOrder >= insertAt).sort((a, b) => b.sortOrder - a.sortOrder)) {
+          await prisma.parameter.update({ where: { id: p.id }, data: { sortOrder: p.sortOrder + 1 } });
+        }
+        const created = await prisma.parameter.create({
+          data: { productId: cp.id, name: 'Moisture Content — roasted', unit: '%', valueType: 'NUMBER', sampleCount: 3, hasIr: true, sortOrder: insertAt },
+        });
+        await prisma.specVersion.create({
+          data: { parameterId: created.id, version: 1, operator: 'RANGE', min: 7, max: 9, displayText: '7–9% (roasted chiura)', sourceTag: 'INTERNAL', note: 'Required acceptable moisture range for roasted chiura per QC lab (Poonam Gupta, Oct 2026).', createdBy: 'system (QC lab Oct 2026)' },
+        });
+        added++;
+      }
+      return `${added} chiura product(s) updated`;
     },
   },
 ];

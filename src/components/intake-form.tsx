@@ -202,10 +202,21 @@ export function IntakeForm({
                         {row.unit && <span className="whitespace-nowrap text-xs text-stone-500">{row.unit}</span>}
                       </div>
                     ) : row.options ? (
-                      <select className={`field ${cls}`} disabled={!editable} value={row.valueText ?? ''} onChange={(e) => setRow(i, { valueText: e.target.value || null })}>
-                        <option value="">— not tested —</option>
-                        {row.options.map((o) => <option key={o}>{o}</option>)}
-                      </select>
+                      // combo box: pick a standard option or type the observation
+                      // (QC lab Oct 2026 — observations as required)
+                      <>
+                        <input
+                          className={`field ${cls}`}
+                          disabled={!editable}
+                          list={`opts-${row.parameterId}`}
+                          value={row.valueText ?? ''}
+                          onChange={(e) => setRow(i, { valueText: e.target.value || null })}
+                          placeholder="not tested — pick or type"
+                        />
+                        <datalist id={`opts-${row.parameterId}`}>
+                          {row.options.map((o) => <option key={o} value={o} />)}
+                        </datalist>
+                      </>
                     ) : (
                       <input className={`field ${cls}`} disabled={!editable} value={row.valueText ?? ''} onChange={(e) => setRow(i, { valueText: e.target.value || null })} placeholder="not tested" />
                     )}
