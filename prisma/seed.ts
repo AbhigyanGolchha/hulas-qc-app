@@ -152,8 +152,8 @@ async function main() {
 
   // 1A. Wheat ⚙ — seeded exactly from the existing paper form
   const wheatParams = await createParams({ materialId: wheat.id }, [
-    { name: 'Texture', valueType: 'SELECT', options: ['Hard', 'Medium', 'Soft'], op: 'TEXT_MATCH', textExpected: 'Hard', display: 'Hard' },
-    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Grainy', 'Dull', 'Off-odour', 'Musty'], op: 'TEXT_MATCH', textExpected: 'Grainy', display: 'Grainy' },
+    { name: 'Texture', valueType: 'SELECT', options: ['Hard', 'Semi-hard', 'Normal', 'Medium', 'Soft', 'Brittle', 'Other (see note)'], op: 'TEXT_MATCH', textExpected: 'Hard', display: 'Hard' },
+    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Grainy', 'Normal', 'Bright, Clean, Uniform', 'Dull', 'Discoloured', 'Off-odour', 'Musty', 'Insect-infested', 'Other (see note)'], op: 'TEXT_MATCH', textExpected: 'Grainy', display: 'Grainy' },
     { name: 'Moisture Content', unit: '%', op: 'LTE', max: 15.0, display: '≤ 15.0%' },
     { name: 'Size — 1000 kernels weight (HI)', unit: 'gm', op: 'RANGE', min: 40, max: 65, display: '40–65 gm' },
     { name: 'Dust & others', unit: '%', op: 'LT', max: 1.0, display: '< 1.0%' },
@@ -178,7 +178,8 @@ async function main() {
   const REF = 'REFERENCE' as const;
   await createParams({ materialId: paddy.id }, [
     { name: 'Variety / class', valueType: 'TEXT', op: 'RECORD', display: 'as declared (chiura-suitable variety)', tag: REF },
-    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Normal', 'Off-odour', 'Musty'], op: 'TEXT_MATCH', textExpected: 'Normal', display: 'normal, no off-odour/must', tag: REF },
+    { name: 'Texture', valueType: 'SELECT', options: ['Hard', 'Semi-hard', 'Normal', 'Medium', 'Soft', 'Brittle', 'Other (see note)'], op: 'RECORD', display: 'record texture (pick or type observation)' },
+    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Normal', 'Bright, Clean, Uniform', 'Dull', 'Discoloured', 'Off-odour', 'Musty', 'Insect-infested', 'Other (see note)'], op: 'TEXT_MATCH', textExpected: 'Normal', display: 'normal, no off-odour/must', tag: REF },
     { name: 'Moisture Content', unit: '%', op: 'LTE', max: 14.0, display: '≤ 14.0% for storage (abs. max 17.0%)', tag: REF, note: 'Absolute max 17.0% — accept 14–17% only with drying plan.' },
     { name: 'Foreign Matter — Inorganic', unit: '%', op: 'LTE', max: 1.0, display: '≤ 1.0%', tag: REF },
     { name: 'Foreign Matter — Organic', unit: '%', op: 'LTE', max: 1.0, display: '≤ 1.0%', tag: REF },
@@ -195,7 +196,8 @@ async function main() {
   // 1C. Rice 📖 — FSSAI milled/parboiled rice + puffing practice
   await createParams({ materialId: rice.id }, [
     { name: 'Rice type', valueType: 'SELECT', options: ['Parboiled milled rice (puffing grade)', 'Raw milled rice'], op: 'TEXT_MATCH', textExpected: 'Parboiled milled rice (puffing grade)', display: 'Parboiled milled rice (puffing grade)', tag: REF },
-    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Normal', 'Rancid', 'Off-odour'], op: 'TEXT_MATCH', textExpected: 'Normal', display: 'normal, no rancid/off-odour', tag: REF },
+    { name: 'Texture', valueType: 'SELECT', options: ['Hard', 'Semi-hard', 'Normal', 'Medium', 'Soft', 'Brittle', 'Other (see note)'], op: 'RECORD', display: 'record texture (pick or type observation)' },
+    { name: 'Appearance / Smell', valueType: 'SELECT', options: ['Normal', 'Bright, Clean, Uniform', 'Dull', 'Discoloured', 'Rancid', 'Off-odour', 'Musty', 'Insect-infested', 'Other (see note)'], op: 'TEXT_MATCH', textExpected: 'Normal', display: 'normal, no rancid/off-odour', tag: REF },
     { name: 'Moisture Content', unit: '%', op: 'LTE', max: 14.0, display: '≤ 14.0%', tag: REF, regRef: 'FSSAI milled rice' },
     { name: 'Broken grains', unit: '%', op: 'LTE', max: 5.0, display: '≤ 5.0% (whole kernels puff best)', tag: REF },
     { name: 'Foreign Matter — organic', unit: '%', op: 'LTE', max: 0.5, display: '≤ 0.5%', tag: REF, regRef: 'FSSAI' },
@@ -270,8 +272,7 @@ async function main() {
     { name: 'Granularity >180µ (per 100 gm)', unit: 'gm', op: 'NIL', display: '>180µ = 0' },
     { name: 'Granularity >150µ (per 100 gm)', unit: 'gm', op: 'NIL', display: '>150µ = 0' },
     { name: 'Granularity >132µ (per 100 gm)', unit: 'gm', op: 'RANGE', min: 0, max: 0.3, display: '>132µ = 0–0.3' },
-    // record-only: can't pass alongside ">118µ = 1–4"; the lab passes on the coarse bands
-    { name: 'Granularity <118µ (per 100 gm)', unit: 'gm', op: 'RECORD', min: 99.7, max: 100, display: '<118µ = 99.7–100', note: 'Recorded, not auto-failed: it cannot pass together with ">118µ = 1–4", and the lab passes sheets on the coarser bands.' },
+    { name: 'Granularity <118µ (per 100 gm)', unit: 'gm', op: 'RANGE', min: 97.7, max: 100, display: '<118µ = 97.7–100 g/100 g', note: 'Band corrected to 97.7–100 g/100 g per QC lab (Poonam Gupta, Oct 2026).' },
     uric,
   ]);
 
@@ -325,6 +326,7 @@ async function main() {
   for (const cp of chiuraProducts) {
     const ids = await createParams({ productId: cp.id }, [
       { name: 'Moisture Content', unit: '%', op: 'LTE', max: 12.0, display: '≤ 12.0% (crispness & 90-day shelf life)', sampleCount: 3, hasIr: true, tag: REF },
+      { name: 'Moisture Content — roasted', unit: '%', op: 'RANGE', min: 7, max: 9, display: '7–9% (roasted chiura)', sampleCount: 3, hasIr: true, note: 'Required acceptable moisture range for roasted chiura per QC lab (Poonam Gupta, Oct 2026).' },
       { name: 'Broken flakes & powder', unit: '%', op: 'LTE', max: 5.0, display: '≤ 5.0%', tag: REF },
       { name: 'Husk / paddy pieces', unit: '%', op: 'LTE', max: 0.1, display: 'Nil (max 0.1%)', tag: REF },
       { name: 'Bran content / colour', valueType: 'SELECT', options: ['Uniform, per grade', 'Uneven', 'Excess bran'], op: 'TEXT_MATCH', textExpected: 'Uniform, per grade', display: 'uniform, per grade (record)', tag: REF },
